@@ -1,0 +1,5 @@
+# Copy this file to android/key.properties (never commit android/key.properties or *.jks)
+storeFile=/absolute/path/to/mizolive-upload-key.jks
+storePassword=REPLACE_WITH_KEYSTORE_PASSWORD
+keyAlias=mizolive
+keyPassword=REPLACE_WITH_KEY_PASSWORD

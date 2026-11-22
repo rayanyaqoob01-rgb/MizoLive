@@ -1,0 +1,97 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader("UTF-8") { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
+def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0.0"
+
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+
+def resolveSigningProp = { String propKey, String envKey ->
+    def propVal = keystoreProperties.getProperty(propKey)
+    if (propVal != null && !propVal.trim().isEmpty()) {
+        return propVal.trim()
+    }
+    def envVal = System.getenv(envKey)
+    return (envVal != null && !envVal.trim().isEmpty()) ? envVal.trim() : null
+}
+
+def releaseStoreFilePath = resolveSigningProp("storeFile", "MIZO_KEYSTORE_PATH")
+def releaseStorePassword = resolveSigningProp("storePassword", "MIZO_KEYSTORE_PASSWORD")
+def releaseKeyAlias = resolveSigningProp("keyAlias", "MIZO_KEY_ALIAS")
+def releaseKeyPassword = resolveSigningProp("keyPassword", "MIZO_KEY_PASSWORD")
+def hasReleaseKeystore = releaseStoreFilePath != null &&
+    releaseStorePassword != null &&
+    releaseKeyAlias != null &&
+    releaseKeyPassword != null
+
+android {
+    namespace = "com.mizolive.app"
+    compileSdk = 35
+    ndkVersion = "26.1.10909125"
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    defaultConfig {
+        applicationId = "com.mizolive.app"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = flutterVersionCode.toInteger()
+        versionName = flutterVersionName
+        multiDexEnabled = true
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            release {
+                storeFile file(releaseStoreFilePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (!hasReleaseKeystore) {
+                throw new GradleException(
+                    "Release signing credentials are missing. Provide android/key.properties or MIZO_KEYSTORE_PATH/MIZO_KEYSTORE_PASSWORD/MIZO_KEY_ALIAS/MIZO_KEY_PASSWORD before building a Play Store release APK/AAB."
+                )
+            }
+            signingConfig = signingConfigs.release
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}

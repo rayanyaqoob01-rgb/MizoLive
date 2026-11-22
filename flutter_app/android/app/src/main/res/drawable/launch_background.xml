@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="135"
+                android:startColor="#06040B"
+                android:centerColor="#1C0B36"
+                android:endColor="#06040B" />
+        </shape>
+    </item>
+    <item android:gravity="center" android:width="108dp" android:height="108dp">
+        <vector
+            android:width="108dp"
+            android:height="108dp"
+            android:viewportWidth="108"
+            android:viewportHeight="108">
+            <path
+                android:fillColor="#14072A"
+                android:strokeColor="#F5B700"
+                android:strokeWidth="3"
+                android:pathData="M24,14 H84 A10,10 0 0 1 94,24 V84 A10,10 0 0 1 84,94 H24 A10,10 0 0 1 14,84 V24 A10,10 0 0 1 24,14 Z" />
+            <!-- Crown -->
+            <path
+                android:fillColor="#F5B700"
+                android:pathData="M34,36 L40,24 L54,32 L68,24 L74,36 Z" />
+            <!-- Letter M -->
+            <path
+                android:fillColor="#FFE27A"
+                android:pathData="M30,78 V44 H39 L54,62 L69,44 H78 V78 H69 V58 L54,75 L39,58 V78 Z" />
+        </vector>
+    </item>
+</layer-list>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#9D4EDD"
+        android:fillAlpha="0.22"
+        android:pathData="M54,18 A36,36 0 1,0 54,90 A36,36 0 1,0 54,18 Z" />
+    <!-- Crown -->
+    <path
+        android:fillColor="#F5B700"
+        android:pathData="M34,39 L40,26 L54,35 L68,26 L74,39 Z" />
+    <!-- Crown Jewels -->
+    <path
+        android:fillColor="#FFE27A"
+        android:pathData="M54,23 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0" />
+    <!-- Royal M -->
+    <path
+        android:fillColor="#F5B700"
+        android:pathData="M30,80 V44 H40 L54,62 L68,44 H78 V80 H68 V59 L54,76 L40,59 V80 Z" />
+</vector>
