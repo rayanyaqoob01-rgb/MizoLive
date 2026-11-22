@@ -1,0 +1,8 @@
+{
+  "name": "Mizo Live",
+  "description": "Mizo Live — Luxury live streaming, interactive party rooms, creator videos, and royal avatar store.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
