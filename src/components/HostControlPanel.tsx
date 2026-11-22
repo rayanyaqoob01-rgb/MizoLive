@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Camera,
   CameraOff,
+  Flashlight,
   Mic,
   MicOff,
   RefreshCw,
@@ -21,7 +22,9 @@ import {
 interface HostControlPanelProps {
   open: boolean;
   controls: HostControlState;
+  flashSupported?: boolean;
   onChange: (next: HostControlState) => void;
+  onToggleFlash?: () => void;
   onClose: () => void;
 }
 
@@ -50,6 +53,7 @@ export const HostControlPanel: React.FC<HostControlPanelProps> = ({
   open,
   controls,
   onChange,
+  onToggleFlash,
   onClose,
 }) => {
   if (!open) return null;
@@ -85,31 +89,31 @@ export const HostControlPanel: React.FC<HostControlPanelProps> = ({
           </button>
         </div>
 
-        {/* Camera & Microphone Controls */}
-        <div className="grid grid-cols-4 gap-2">
+        {/* Camera, Microphone, Switch, Rotation & Flash Controls */}
+        <div className="grid grid-cols-5 gap-1.5">
           <button
             type="button"
             onClick={() => onChange({ ...controls, cameraOn: !controls.cameraOn })}
-            className={`p-2.5 rounded-2xl border flex flex-col items-center gap-1 text-[11px] font-semibold transition-colors ${
+            className={`p-2 rounded-2xl border flex flex-col items-center gap-1 text-[10px] font-semibold transition-colors ${
               controls.cameraOn
                 ? 'bg-purple-900/50 border-amber-400/60 text-white'
                 : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
             }`}
           >
-            {controls.cameraOn ? <Camera className="w-5 h-5 text-amber-300" /> : <CameraOff className="w-5 h-5 text-rose-400" />}
+            {controls.cameraOn ? <Camera className="w-4 h-4 text-amber-300" /> : <CameraOff className="w-4 h-4 text-rose-400" />}
             <span>{controls.cameraOn ? 'Cam ON' : 'Cam OFF'}</span>
           </button>
 
           <button
             type="button"
             onClick={() => onChange({ ...controls, micOn: !controls.micOn })}
-            className={`p-2.5 rounded-2xl border flex flex-col items-center gap-1 text-[11px] font-semibold transition-colors ${
+            className={`p-2 rounded-2xl border flex flex-col items-center gap-1 text-[10px] font-semibold transition-colors ${
               controls.micOn
                 ? 'bg-purple-900/50 border-amber-400/60 text-white'
                 : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
             }`}
           >
-            {controls.micOn ? <Mic className="w-5 h-5 text-amber-300" /> : <MicOff className="w-5 h-5 text-rose-400" />}
+            {controls.micOn ? <Mic className="w-4 h-4 text-amber-300" /> : <MicOff className="w-4 h-4 text-rose-400" />}
             <span>{controls.micOn ? 'Mic ON' : 'Mic OFF'}</span>
           </button>
 
@@ -121,19 +125,35 @@ export const HostControlPanel: React.FC<HostControlPanelProps> = ({
                 facingMode: controls.facingMode === 'front' ? 'rear' : 'front',
               })
             }
-            className="p-2.5 rounded-2xl bg-[#160B2C] border border-purple-500/30 hover:border-amber-400/50 flex flex-col items-center gap-1 text-[11px] font-semibold text-white"
+            className="p-2 rounded-2xl bg-[#160B2C] border border-purple-500/30 hover:border-amber-400/50 flex flex-col items-center gap-1 text-[10px] font-semibold text-white"
           >
-            <RefreshCw className="w-5 h-5 text-purple-300" />
+            <RefreshCw className="w-4 h-4 text-purple-300" />
             <span>{controls.facingMode === 'front' ? 'Front' : 'Rear'}</span>
           </button>
 
           <button
             type="button"
             onClick={rotateCamera}
-            className="p-2.5 rounded-2xl bg-[#160B2C] border border-purple-500/30 hover:border-amber-400/50 flex flex-col items-center gap-1 text-[11px] font-semibold text-white"
+            className="p-2 rounded-2xl bg-[#160B2C] border border-purple-500/30 hover:border-amber-400/50 flex flex-col items-center gap-1 text-[10px] font-semibold text-white"
           >
-            <RotateCw className="w-5 h-5 text-purple-300" />
+            <RotateCw className="w-4 h-4 text-purple-300" />
             <span>{controls.rotationDeg}&deg;</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (onToggleFlash) onToggleFlash();
+              else onChange({ ...controls, flashOn: !controls.flashOn });
+            }}
+            className={`p-2 rounded-2xl border flex flex-col items-center gap-1 text-[10px] font-semibold transition-colors ${
+              controls.flashOn
+                ? 'bg-amber-400/20 border-amber-400 text-amber-200'
+                : 'bg-[#160B2C] border-purple-500/30 text-slate-300'
+            }`}
+          >
+            <Flashlight className="w-4 h-4 text-amber-300" />
+            <span>{controls.flashOn ? 'Flash ON' : 'Flash'}</span>
           </button>
         </div>
 
@@ -142,7 +162,7 @@ export const HostControlPanel: React.FC<HostControlPanelProps> = ({
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-white inline-flex items-center gap-1.5">
               <Wand2 className="w-3.5 h-3.5 text-amber-400" />
-              Video Filters
+              Video Filters &amp; Beauty
             </span>
             <span className="text-amber-300 font-semibold">{controls.filter}</span>
           </div>
@@ -216,10 +236,6 @@ export const HostControlPanel: React.FC<HostControlPanelProps> = ({
             ))}
           </div>
         </div>
-
-        <p className="text-[11px] text-slate-400 text-center">
-          Interactive Host Studio Demo — hardware camera &amp; filters run locally when device permissions are active.
-        </p>
       </div>
     </div>
   );

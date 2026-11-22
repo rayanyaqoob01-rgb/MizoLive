@@ -10,7 +10,9 @@ export type AppScreen =
   | 'wallet'
   | 'agency'
   | 'rankings'
-  | 'achievements';
+  | 'achievements'
+  | 'account-settings'
+  | 'admin-diagnostics';
 
 export type RoomCategory = 'All' | 'Popular' | 'Hot' | 'New' | 'Recommended';
 
@@ -18,10 +20,15 @@ export type StoreCategory =
   | 'VIP Frames'
   | 'Special Entry'
   | 'Custom Gift'
-  | 'Premium Assets';
+  | 'Premium Assets'
+  | 'Profile Decorations'
+  | 'Animated Frames'
+  | 'Name Decorations'
+  | 'Special Badges';
 
 export type InboxTab = 'All' | 'Messages' | 'Requests' | 'Notifications' | 'Calls';
-export type ProfileVideoTab = 'public' | 'private' | 'saved';
+export type ProfileVideoTab = 'public' | 'private' | 'saved' | 'liked' | 'reposted';
+export type RoomSeatLayout = 4 | 6 | 9 | 12;
 
 export interface ActiveUserItem {
   id: string;
@@ -53,8 +60,22 @@ export interface RoomParticipant {
   name: string;
   avatar: string;
   level: number;
-  role: 'Host' | 'Speaker' | 'Listener';
+  role: 'Host' | 'Moderator' | 'Speaker' | 'Listener';
   isMuted?: boolean;
+  canSpeak?: boolean;
+  canVideo?: boolean;
+}
+
+export interface RoomSeatItem {
+  seatIndex: number;
+  occupantId: string | null;
+  occupantName: string | null;
+  occupantAvatar: string | null;
+  occupantLevel: number;
+  isHostSeat?: boolean;
+  isMuted: boolean;
+  isLocked: boolean;
+  hasVideo?: boolean;
 }
 
 export interface RoomItem {
@@ -66,6 +87,7 @@ export interface RoomItem {
   hostAvatar: string;
   hostLevel: number;
   roomType: 'Public' | 'VIP' | 'Music' | 'Chat';
+  seatCapacity?: RoomSeatLayout;
   isUserHost?: boolean;
   participants: number;
   participantDisplay: string;
@@ -250,6 +272,7 @@ export interface HostControlState {
   facingMode: 'front' | 'rear';
   rotationDeg: 0 | 90 | 180 | 270;
   micOn: boolean;
+  flashOn: boolean;
   filter: VideoFilterMode;
   effect: VisualEffectMode;
   backgroundEffect: BackgroundEffectMode;
@@ -317,6 +340,28 @@ export interface ServerWalletAccount {
   transactions: LedgerTx[];
 }
 
+export interface BlockedUserItem {
+  id: string;
+  name: string;
+  reason: string;
+  blockedAt: string;
+}
+
+export interface ReportHistoryItem {
+  id: string;
+  targetName: string;
+  targetType: 'user' | 'live' | 'room' | 'video';
+  reason: string;
+  status: 'open' | 'reviewed';
+  timestamp: string;
+}
+
+export type ProfileThemeId =
+  | 'royal-purple'
+  | 'obsidian-gold'
+  | 'neon-orchid'
+  | 'midnight-crown';
+
 export interface UserProfile {
   username: string;
   userId: string;
@@ -326,6 +371,13 @@ export interface UserProfile {
   followers: number;
   following: number;
   likes: string;
+  totalProfileViews: number;
+  accountCreatedAt: string;
+  profileTheme: ProfileThemeId;
+  profilePrivacy: 'public' | 'followers' | 'private';
+  isVerified: boolean;
+  liveSessionsCount: number;
+  giftsReceivedCount: number;
   coins: number;
   spentCoins: number;
   level: number;
@@ -335,4 +387,6 @@ export interface UserProfile {
   equippedFrameId: string | null;
   equippedEntryId: string | null;
   equippedAssetId: string | null;
+  equippedNameDecorId?: string | null;
+  equippedSpecialBadgeId?: string | null;
 }

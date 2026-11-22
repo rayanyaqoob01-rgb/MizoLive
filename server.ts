@@ -4,11 +4,27 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
+import agoraToken from 'agora-token';
+
+const { RtcTokenBuilder, RtcRole } = agoraToken;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'rayanyaqoob01@gmail.com').toLowerCase();
+const SERVER_START_TS = Date.now();
+
+function getAgoraConfig() {
+  const appId = (process.env.AGORA_APP_ID || '').trim();
+  const appCertificate = (process.env.AGORA_APP_CERTIFICATE || '').trim();
+  const configured =
+    Boolean(appId) &&
+    Boolean(appCertificate) &&
+    appId !== 'MY_AGORA_APP_ID' &&
+    appCertificate !== 'MY_AGORA_APP_CERTIFICATE';
+  return { appId, appCertificate, configured };
+}
 
 // Configurable server-side economy (never hardcoded in frontend)
 const ECONOMY_CONFIG = {
@@ -23,14 +39,15 @@ const ECONOMY_CONFIG = {
   ],
 };
 
-// Authoritative server-side Store & Gift price catalog
+// Authoritative server-side Store & Gift price catalog (All 8 categories)
 const STORE_PRICES: Record<string, { name: string; price: number; category: string }> = {
   'frame-royal-flame': { name: 'Royal Flame', price: 799, category: 'VIP Frames' },
   'frame-neon-galaxy': { name: 'Neon Galaxy', price: 899, category: 'VIP Frames' },
   'frame-diamond-aura': { name: 'Diamond Aura', price: 1199, category: 'VIP Frames' },
   'frame-gold-wreath': { name: 'Gold Wreath', price: 599, category: 'VIP Frames' },
   'frame-royal-wings': { name: 'Royal Wings', price: 999, category: 'VIP Frames' },
-  'frame-animated-halo': { name: 'Animated Halo', price: 699, category: 'VIP Frames' },
+  'frame-animated-halo': { name: 'Animated Halo', price: 699, category: 'Animated Frames' },
+  'frame-pulse-crown': { name: 'Pulse Crown Orbit', price: 1099, category: 'Animated Frames' },
   'entry-royal-crown': { name: 'Royal Entry', price: 999, category: 'Special Entry' },
   'entry-vip-arrival': { name: 'VIP Entry', price: 899, category: 'Special Entry' },
   'entry-golden-wings': { name: 'Golden Entry', price: 799, category: 'Special Entry' },
@@ -40,7 +57,12 @@ const STORE_PRICES: Record<string, { name: string; price: number; category: stri
   'cgift-diamond-swan': { name: 'Diamond Swan', price: 899, category: 'Custom Gift' },
   'asset-starlight-aura': { name: 'Starlight Profile Aura', price: 650, category: 'Premium Assets' },
   'asset-crown-spark': { name: 'Royal Crown Sparkles', price: 850, category: 'Premium Assets' },
-  'asset-neon-ribbon': { name: 'Neon Profile Ribbon', price: 550, category: 'Premium Assets' },
+  'asset-neon-ribbon': { name: 'Neon Profile Ribbon', price: 550, category: 'Profile Decorations' },
+  'decor-obsidian-crest': { name: 'Obsidian Banner Crest', price: 720, category: 'Profile Decorations' },
+  'name-royal-gold': { name: 'Imperial Gold Gradient', price: 480, category: 'Name Decorations' },
+  'name-neon-prism': { name: 'Neon Orchid Shimmer', price: 560, category: 'Name Decorations' },
+  'badge-sovereign': { name: 'Sovereign Guardian Badge', price: 950, category: 'Special Badges' },
+  'badge-founding': { name: 'Mizo Founding Star', price: 620, category: 'Special Badges' },
 };
 
 const GIFT_PRICES: Record<string, { name: string; price: number }> = {
@@ -87,8 +109,20 @@ interface UserAccount {
   transactions: LedgerTx[];
 }
 
+interface ModerationReportRecord {
+  id: string;
+  reporterId: string;
+  targetName: string;
+  targetType: string;
+  reason: string;
+  status: 'open' | 'reviewed';
+  timestamp: string;
+}
+
 const accounts = new Map<string, UserAccount>();
 const activeCalls = new Map<string, ActiveCallSession>();
+const serverReports: ModerationReportRecord[] = [];
+const serverErrorLog: Array<{ endpoint: string; message: string; timestamp: string }> = [];
 
 function getOrCreateAccount(userId: string): UserAccount {
   const safeId = String(userId || '12345678').slice(0, 40);
@@ -144,21 +178,157 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
-  // 1. Configurable Economy & Rates
-  app.get('/api/config', (_req: Request, res: Response) => {
+  // 0. Health & Service Status
+  app.get('/api/health', (_req: Request, res: Response) => {
+    const agora = getAgoraConfig();
     res.json({
-      economy: ECONOMY_CONFIG,
+      ok: true,
+      service: 'mizo-live-api',
+      uptimeSec: Math.round((Date.now() - SERVER_START_TS) / 1000),
+      agora: {
+        configured: agora.configured,
+      },
       paymentMode: process.env.STRIPE_SECRET_KEY ? 'configured' : 'sandbox_demo',
     });
   });
 
-  // 2. Get Server-Authoritative Wallet State
+  // 1. Configurable Economy & Rates
+  app.get('/api/config', (_req: Request, res: Response) => {
+    const agora = getAgoraConfig();
+    res.json({
+      economy: ECONOMY_CONFIG,
+      paymentMode: process.env.STRIPE_SECRET_KEY ? 'configured' : 'sandbox_demo',
+      agoraConfigured: agora.configured,
+    });
+  });
+
+  // 2. Server-Side Agora RTC Token Generator (Never exposes App Certificate)
+  app.post('/api/agora/token', (req: Request, res: Response) => {
+    const agora = getAgoraConfig();
+    if (!agora.configured) {
+      serverErrorLog.unshift({
+        endpoint: '/api/agora/token',
+        message: 'AGORA_APP_ID or AGORA_APP_CERTIFICATE is missing on server.',
+        timestamp: new Date().toISOString(),
+      });
+      res.status(503).json({
+        ok: false,
+        configured: false,
+        code: 'AGORA_CREDENTIALS_MISSING',
+        error: 'Agora App ID and App Certificate must be configured in server environment variables.',
+      });
+      return;
+    }
+
+    const rawChannel = String(req.body?.channelName || '').trim();
+    const channelName = rawChannel.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+    if (!channelName) {
+      res.status(400).json({ ok: false, error: 'Valid channelName is required' });
+      return;
+    }
+
+    const uid = Number(req.body?.uid) > 0 ? Math.floor(Number(req.body.uid)) : Math.floor(10000 + Math.random() * 89999);
+    const role = req.body?.role === 'subscriber' ? RtcRole.SUBSCRIBER : RtcRole.PUBLISHER;
+    const expireSeconds = 3600;
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const privilegeExpiredTs = currentTimestamp + expireSeconds;
+
+    try {
+      const token = RtcTokenBuilder.buildTokenWithUid(
+        agora.appId,
+        agora.appCertificate,
+        channelName,
+        uid,
+        role,
+        privilegeExpiredTs,
+        privilegeExpiredTs
+      );
+      res.json({
+        ok: true,
+        configured: true,
+        appId: agora.appId,
+        token,
+        channelName,
+        uid,
+        expiresAt: privilegeExpiredTs,
+      });
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to build Agora RTC token';
+      serverErrorLog.unshift({
+        endpoint: '/api/agora/token',
+        message: msg,
+        timestamp: new Date().toISOString(),
+      });
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  // 3. Protected Admin Diagnostics Endpoint (Strictly Admin Only)
+  app.get('/api/admin/diagnostics', (req: Request, res: Response) => {
+    const email = String(req.header('x-mizo-admin-email') || '').trim().toLowerCase();
+    const verified = req.header('x-mizo-email-verified') === 'true';
+
+    if (!verified || email !== ADMIN_EMAIL) {
+      res.status(403).json({
+        ok: false,
+        error: 'Forbidden: Protected Admin Diagnostics requires verified admin credentials.',
+      });
+      return;
+    }
+
+    const agora = getAgoraConfig();
+    res.json({
+      ok: true,
+      adminEmail: email,
+      uptimeSec: Math.round((Date.now() - SERVER_START_TS) / 1000),
+      backendStatus: 'healthy',
+      agoraConfigured: agora.configured,
+      activeCallsCount: activeCalls.size,
+      activeAccountsCount: accounts.size,
+      reportsCount: serverReports.length,
+      recentServerErrors: serverErrorLog.slice(0, 15),
+    });
+  });
+
+  // 4. Reports & Moderation History Endpoint
+  app.get('/api/reports', (req: Request, res: Response) => {
+    const userId = resolveUserId(req);
+    res.json({
+      reports: serverReports.filter((r) => r.reporterId === userId),
+    });
+  });
+
+  app.post('/api/reports', (req: Request, res: Response) => {
+    const userId = resolveUserId(req);
+    const targetName = String(req.body?.targetName || '').trim().slice(0, 80);
+    const targetType = String(req.body?.targetType || 'user').slice(0, 20);
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+
+    if (!targetName || reason.length < 3) {
+      res.status(400).json({ error: 'Target and reason (min 3 chars) are required' });
+      return;
+    }
+
+    const rec: ModerationReportRecord = {
+      id: `rep-${Date.now()}`,
+      reporterId: userId,
+      targetName,
+      targetType,
+      reason,
+      status: 'open',
+      timestamp: 'Just now',
+    };
+    serverReports.unshift(rec);
+    res.json({ ok: true, report: rec });
+  });
+
+  // 5. Get Server-Authoritative Wallet State
   app.get('/api/wallet', (req: Request, res: Response) => {
     const acc = getOrCreateAccount(resolveUserId(req));
     res.json(acc);
   });
 
-  // 3. Sandbox Coin Package Recharge (requires real payment provider in production)
+  // 6. Sandbox Coin Package Recharge
   app.post('/api/wallet/recharge', (req: Request, res: Response) => {
     const userId = resolveUserId(req);
     const packageId = String(req.body?.packageId || '');
@@ -184,7 +354,7 @@ async function startServer() {
     res.json({ account: acc, added: totalAdded });
   });
 
-  // 4. Server-Validated Store Purchase
+  // 7. Server-Validated Store Purchase
   app.post('/api/store/purchase', (req: Request, res: Response) => {
     const userId = resolveUserId(req);
     const itemId = String(req.body?.itemId || '');
@@ -224,7 +394,7 @@ async function startServer() {
     res.json({ account: acc, item: catalogItem });
   });
 
-  // 5. Server-Validated Gift Sending
+  // 8. Server-Validated Gift Sending
   app.post('/api/gifts/send', (req: Request, res: Response) => {
     const userId = resolveUserId(req);
     const giftId = String(req.body?.giftId || '');
@@ -259,7 +429,7 @@ async function startServer() {
     res.json({ account: acc, gift });
   });
 
-  // 6. Server-Validated Coin-Based Calling Economy
+  // 9. Server-Validated Coin-Based Calling Economy
   app.post('/api/calls/start', (req: Request, res: Response) => {
     const userId = resolveUserId(req);
     const callType = req.body?.callType === 'video' ? 'video' : 'audio';
@@ -286,7 +456,6 @@ async function startServer() {
       return;
     }
 
-    // Deduct first minute upfront upon consent
     const platformFee = Math.round((ratePerMin * ECONOMY_CONFIG.platformCommissionPct) / 100);
     const receiverEarned = ratePerMin - platformFee;
     acc.coins -= ratePerMin;
@@ -385,7 +554,6 @@ async function startServer() {
         const parsed = JSON.parse(raw.toString());
         if (!parsed || typeof parsed.type !== 'string') return;
 
-        // Broadcast signaling / chat / PK events to other connected peers
         wss.clients.forEach((client) => {
           if (client !== socket && client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify(parsed));
@@ -397,7 +565,6 @@ async function startServer() {
     });
   });
 
-  // Dev Vite Middleware or Production Static Bundle
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

@@ -1,0 +1,278 @@
+{
+  "entities": {
+    "AdminRole": {
+      "title": "AdminRole",
+      "description": "Trusted server/admin registry granting Admin Diagnostics and moderation privileges.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "role": { "type": "string", "enum": ["admin", "superadmin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Public Mizo Live creator profile visible to the community (no PII).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 4, "maxLength": 40 },
+        "username": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "bio": { "type": "string", "maxLength": 240 },
+        "avatar": { "type": "string", "maxLength": 500 },
+        "coverImage": { "type": "string", "maxLength": 500 },
+        "profileTheme": { "type": "string", "enum": ["royal-purple", "obsidian-gold", "neon-orchid", "midnight-crown"] },
+        "profilePrivacy": { "type": "string", "enum": ["public", "followers", "private"] },
+        "verified": { "type": "boolean" },
+        "level": { "type": "integer" },
+        "xp": { "type": "integer" },
+        "vipLevel": { "type": "integer" },
+        "svipLevel": { "type": "integer" },
+        "followersCount": { "type": "integer" },
+        "followingCount": { "type": "integer" },
+        "totalLikes": { "type": "integer" },
+        "totalProfileViews": { "type": "integer" },
+        "equippedFrameId": { "type": "string", "maxLength": 80 },
+        "equippedEntryId": { "type": "string", "maxLength": 80 },
+        "equippedAssetId": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "userId", "username", "level", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated PII, privacy settings, blocked user list, and notification preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "language": { "type": "string", "maxLength": 20 },
+        "fcmToken": { "type": "string", "maxLength": 512 },
+        "privacySettings": { "type": "object" },
+        "notificationPrefs": { "type": "object" },
+        "blockedUserIds": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "updatedAt"]
+    },
+    "WalletAccount": {
+      "title": "WalletAccount",
+      "description": "User coin ledger and owned digital store item IDs.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "coins": { "type": "integer" },
+        "spentCoins": { "type": "integer" },
+        "receivedCoins": { "type": "integer" },
+        "callEarnings": { "type": "integer" },
+        "ownedItemIds": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "coins", "spentCoins", "updatedAt"]
+    },
+    "TransactionRecord": {
+      "title": "TransactionRecord",
+      "description": "Immutable coin transaction history entry.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "type": { "type": "string", "enum": ["recharge", "gift_sent", "gift_received", "store_purchase", "call_charge", "call_earning"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "amount": { "type": "integer" },
+        "direction": { "type": "string", "enum": ["in", "out"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "type", "title", "amount", "direction", "createdAt"]
+    },
+    "LiveStreamSession": {
+      "title": "LiveStreamSession",
+      "description": "Active or ended Agora-backed live streaming broadcast.",
+      "type": "object",
+      "properties": {
+        "hostUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "hostName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "coverUrl": { "type": "string", "maxLength": 500 },
+        "channelName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "status": { "type": "string", "enum": ["live", "ended"] },
+        "viewersCount": { "type": "integer" },
+        "peakViewers": { "type": "integer" },
+        "likesCount": { "type": "integer" },
+        "giftsCoins": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hostUid", "hostName", "title", "channelName", "status", "createdAt", "updatedAt"]
+    },
+    "PartyRoomSession": {
+      "title": "PartyRoomSession",
+      "description": "Multi-seat Agora audio/video party room with configurable 4/6/9/12 seat layout.",
+      "type": "object",
+      "properties": {
+        "hostUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "hostName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "description": { "type": "string", "maxLength": 240 },
+        "roomType": { "type": "string", "enum": ["Public", "VIP", "Music", "Chat"] },
+        "seatCapacity": { "type": "integer" },
+        "channelName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "status": { "type": "string", "enum": ["active", "ended"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hostUid", "hostName", "name", "roomType", "seatCapacity", "channelName", "status", "createdAt", "updatedAt"]
+    },
+    "RoomSeat": {
+      "title": "RoomSeat",
+      "description": "Seat occupancy, mute state, and host permission inside a Party Room.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "seatIndex": { "type": "integer" },
+        "occupantUid": { "type": "string", "maxLength": 128 },
+        "occupantName": { "type": "string", "maxLength": 60 },
+        "isMuted": { "type": "boolean" },
+        "isLocked": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "seatIndex", "isMuted", "isLocked", "updatedAt"]
+    },
+    "RoomOrLiveMessage": {
+      "title": "RoomOrLiveMessage",
+      "description": "Real-time chat message in a live stream or party room.",
+      "type": "object",
+      "properties": {
+        "senderUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "senderLevel": { "type": "integer" },
+        "vipLevel": { "type": "integer" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderUid", "senderName", "text", "createdAt"]
+    },
+    "VideoPost": {
+      "title": "VideoPost",
+      "description": "Uploaded short-form video item with privacy visibility.",
+      "type": "object",
+      "properties": {
+        "authorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "creatorName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 400 },
+        "privacy": { "type": "string", "enum": ["Public", "Private"] },
+        "thumbnailUrl": { "type": "string", "maxLength": 500 },
+        "videoUrl": { "type": "string", "maxLength": 500 },
+        "likesCount": { "type": "integer" },
+        "commentsCount": { "type": "integer" },
+        "sharesCount": { "type": "integer" },
+        "repostsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorUid", "creatorName", "title", "privacy", "createdAt", "updatedAt"]
+    },
+    "CallSessionRecord": {
+      "title": "CallSessionRecord",
+      "description": "Audio/Video call log and Agora billing record.",
+      "type": "object",
+      "properties": {
+        "callerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "calleeName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "callType": { "type": "string", "enum": ["audio", "video"] },
+        "status": { "type": "string", "enum": ["ringing", "active", "ended", "declined"] },
+        "durationDisplay": { "type": "string", "maxLength": 20 },
+        "coinsBilled": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["callerUid", "calleeName", "callType", "status", "createdAt"]
+    },
+    "ModerationReport": {
+      "title": "ModerationReport",
+      "description": "User-submitted report against live host, video, or user.",
+      "type": "object",
+      "properties": {
+        "reporterUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "targetType": { "type": "string", "enum": ["user", "live", "room", "video"] },
+        "reason": { "type": "string", "minLength": 3, "maxLength": 300 },
+        "status": { "type": "string", "enum": ["open", "reviewed", "resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reporterUid", "targetId", "targetType", "reason", "status", "createdAt"]
+    },
+    "StoreCatalogItem": {
+      "title": "StoreCatalogItem",
+      "description": "Read-only store catalog definition.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 80 },
+        "category": { "type": "string", "maxLength": 60 },
+        "price": { "type": "integer" }
+      },
+      "required": ["name", "category", "price"]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRole" },
+      "description": "Admin access registry verified by Firebase Auth email_verified + UID."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublicProfile" },
+      "description": "Public creator profiles (excluding PII)."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Owner-only PII, privacy preferences, notification settings, and blocked user list."
+    },
+    "/wallets/{userId}": {
+      "schema": { "$ref": "#/entities/WalletAccount" },
+      "description": "Owner-readable coin balance and owned store items."
+    },
+    "/wallets/{userId}/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/TransactionRecord" },
+      "description": "Owner-readable coin ledger transactions."
+    },
+    "/liveStreams/{streamId}": {
+      "schema": { "$ref": "#/entities/LiveStreamSession" },
+      "description": "Active and historical live streams."
+    },
+    "/liveStreams/{streamId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/RoomOrLiveMessage" },
+      "description": "Live stream chat messages."
+    },
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/PartyRoomSession" },
+      "description": "Audio/video party rooms with 4/6/9/12 seat configs."
+    },
+    "/rooms/{roomId}/seats/{seatId}": {
+      "schema": { "$ref": "#/entities/RoomSeat" },
+      "description": "Party room audio/video seats."
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/RoomOrLiveMessage" },
+      "description": "Party room chat messages."
+    },
+    "/videos/{videoId}": {
+      "schema": { "$ref": "#/entities/VideoPost" },
+      "description": "Short-form user videos."
+    },
+    "/calls/{callId}": {
+      "schema": { "$ref": "#/entities/CallSessionRecord" },
+      "description": "User audio/video call history records."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/ModerationReport" },
+      "description": "Moderation reports submitted by users."
+    },
+    "/storeItems/{itemId}": {
+      "schema": { "$ref": "#/entities/StoreCatalogItem" },
+      "description": "Public store catalog items."
+    }
+  }
+}

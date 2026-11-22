@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Home as HomeIcon } from 'lucide-react';
+import { Home as HomeIcon, Users } from 'lucide-react';
 import { SafeImage } from '../components/Cards';
 import { AppHeader } from '../components/Header';
 import { ASSETS, COVER_PRESETS } from '../data/mizoData';
-import { RoomItem } from '../types/mizo';
+import { RoomItem, RoomSeatLayout } from '../types/mizo';
 
 interface CreateRoomScreenProps {
   hostName: string;
@@ -14,6 +14,7 @@ interface CreateRoomScreenProps {
 }
 
 const ROOM_TYPES: Array<RoomItem['roomType']> = ['Public', 'VIP', 'Music', 'Chat'];
+const SEAT_LAYOUTS: RoomSeatLayout[] = [4, 6, 9, 12];
 
 export const CreateRoomScreen: React.FC<CreateRoomScreenProps> = ({
   hostName,
@@ -26,6 +27,7 @@ export const CreateRoomScreen: React.FC<CreateRoomScreenProps> = ({
   const [roomName, setRoomName] = useState('');
   const [description, setDescription] = useState('');
   const [roomType, setRoomType] = useState<RoomItem['roomType']>('Public');
+  const [seatCapacity, setSeatCapacity] = useState<RoomSeatLayout>(6);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -45,6 +47,7 @@ export const CreateRoomScreen: React.FC<CreateRoomScreenProps> = ({
       hostAvatar,
       hostLevel,
       roomType,
+      seatCapacity,
       isUserHost: true,
       participants: 1,
       participantDisplay: '1',
@@ -76,7 +79,7 @@ export const CreateRoomScreen: React.FC<CreateRoomScreenProps> = ({
                 {roomName.trim() || 'Your New Mizo Room'}
               </p>
               <p className="text-xs text-amber-300">
-                Hosted by {hostName} · {roomType} Room
+                Hosted by {hostName} · {roomType} · {seatCapacity} Seats
               </p>
             </div>
           </div>
@@ -144,6 +147,30 @@ export const CreateRoomScreen: React.FC<CreateRoomScreenProps> = ({
           </div>
         </section>
 
+        {/* Configurable Seat Layout: 4, 6, 9, 12 Seats */}
+        <section className="space-y-2">
+          <span className="text-sm font-display font-bold text-white inline-flex items-center gap-1.5">
+            <Users className="w-4 h-4 text-amber-400" />
+            <span>Seat Layout</span>
+          </span>
+          <div className="grid grid-cols-4 gap-2">
+            {SEAT_LAYOUTS.map((seats) => (
+              <button
+                key={seats}
+                type="button"
+                onClick={() => setSeatCapacity(seats)}
+                className={`min-h-[40px] rounded-xl text-xs font-bold transition-all ${
+                  seatCapacity === seats
+                    ? 'mizo-purple-gradient text-white border border-amber-400/60'
+                    : 'bg-[#140B26] text-slate-300 border border-purple-500/30'
+                }`}
+              >
+                {seats} Seats
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section className="space-y-2">
           <label htmlFor="room-desc" className="block text-sm font-display font-bold text-white">
             Description
@@ -170,7 +197,7 @@ export const CreateRoomScreen: React.FC<CreateRoomScreenProps> = ({
           className="w-full min-h-[48px] rounded-2xl bg-gradient-to-r from-[#6D28D9] via-[#A21CAF] to-[#7E22CE] border border-fuchsia-300/40 text-sm font-extrabold text-white shadow-lg shadow-purple-900/50 flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.99] transition-all"
         >
           <HomeIcon className="w-4 h-4" />
-          <span>Create Room</span>
+          <span>Create {seatCapacity}-Seat Room</span>
         </button>
       </form>
     </div>

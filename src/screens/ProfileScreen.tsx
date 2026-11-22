@@ -10,10 +10,17 @@ import {
   Coins,
   Copy,
   Crown,
+  Eye,
   Film,
+  Gift,
+  Heart,
+  History,
   Lock,
   Pencil,
+  PhoneCall,
   Plus,
+  Repeat2,
+  Settings,
   Share2,
   Shield,
   Sparkles,
@@ -37,6 +44,8 @@ interface ProfileScreenProps {
   achievements: AchievementBadge[];
   myVideos: UserVideo[];
   savedVideos: UserVideo[];
+  likedVideos: UserVideo[];
+  repostedVideos: UserVideo[];
   onEditProfile: () => void;
   onPlayVideo: (video: UserVideo) => void;
   onOpenCreateVideo: () => void;
@@ -46,7 +55,10 @@ interface ProfileScreenProps {
   onOpenAgency: () => void;
   onOpenWallet: () => void;
   onOpenRankings: () => void;
+  onOpenSettings: () => void;
+  onOpenCallHistory: () => void;
   onShareProfile: () => void;
+  onToggleEquipStoreItem: (item: StoreItem) => void;
 }
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
@@ -55,6 +67,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   achievements,
   myVideos,
   savedVideos,
+  likedVideos,
+  repostedVideos,
   onEditProfile,
   onPlayVideo,
   onOpenCreateVideo,
@@ -64,9 +78,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onOpenAgency,
   onOpenWallet,
   onOpenRankings,
+  onOpenSettings,
+  onOpenCallHistory,
   onShareProfile,
+  onToggleEquipStoreItem,
 }) => {
   const [videoTab, setVideoTab] = useState<ProfileVideoTab>('public');
+  const [assetTab, setAssetTab] = useState<'frames' | 'entries' | 'badges' | 'gifts'>('frames');
   const [copiedId, setCopiedId] = useState(false);
   const [vipModal, setVipModal] = useState<'vip' | 'svip' | null>(null);
 
@@ -85,23 +103,50 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       ? publicVideos
       : videoTab === 'private'
       ? privateVideos
-      : savedVideos;
+      : videoTab === 'saved'
+      ? savedVideos
+      : videoTab === 'liked'
+      ? likedVideos
+      : repostedVideos;
 
   const clampedLevel = Math.max(1, Math.min(LEVEL_CONFIG.maxLevel, profile.level));
   const tier = getLevelTier(clampedLevel);
   const nextXp = getXpRequiredForLevel(clampedLevel);
   const progressPct = Math.min(100, Math.round((profile.xp / nextXp) * 100));
 
-  const ownedFramesCount = storeItems.filter(
-    (s) => s.category === 'VIP Frames' && s.owned
-  ).length;
-  const ownedAnimatedAssetsCount = storeItems.filter(
-    (s) => (s.category === 'Premium Assets' || s.category === 'Special Entry') && s.owned
-  ).length;
+  const ownedFrames = storeItems.filter(
+    (s) => (s.category === 'VIP Frames' || s.category === 'Animated Frames') && s.owned
+  );
+  const ownedEntries = storeItems.filter((s) => s.category === 'Special Entry' && s.owned);
+  const ownedSpecialAssets = storeItems.filter(
+    (s) =>
+      (s.category === 'Premium Assets' ||
+        s.category === 'Profile Decorations' ||
+        s.category === 'Name Decorations' ||
+        s.category === 'Special Badges' ||
+        s.category === 'Custom Gift') &&
+      s.owned
+  );
   const equippedBadge = achievements.find((b) => b.equipped);
 
+  const themeBannerClass =
+    profile.profileTheme === 'obsidian-gold'
+      ? 'from-amber-950/60 via-[#0E0804] to-[#06040B]'
+      : profile.profileTheme === 'neon-orchid'
+      ? 'from-fuchsia-950/70 via-[#1D0528] to-[#06040B]'
+      : profile.profileTheme === 'midnight-crown'
+      ? 'from-indigo-950/70 via-[#070B22] to-[#06040B]'
+      : 'from-purple-950/50 via-[#120624] to-[#06040B]';
+
+  const nameStyleClass =
+    profile.equippedNameDecorId === 'name-royal-gold'
+      ? 'mizo-gold-text'
+      : profile.equippedNameDecorId === 'name-neon-prism'
+      ? 'bg-gradient-to-r from-fuchsia-400 via-amber-300 to-purple-300 bg-clip-text text-transparent'
+      : 'text-white';
+
   return (
-    <div className="min-h-screen pb-24">
+    <div className={`min-h-screen pb-24 bg-gradient-to-b ${themeBannerClass}`}>
       <main className="max-w-4xl mx-auto">
         {/* Large Cover Background */}
         <section className="relative h-48 sm:h-60 w-full overflow-hidden">
@@ -120,7 +165,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               className="min-h-[38px] px-3 rounded-full bg-black/55 backdrop-blur-md border border-amber-400/40 text-xs font-semibold text-amber-300 inline-flex items-center gap-1.5 hover:bg-black/75"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Frames</span>
+              <span>Frames &amp; Assets</span>
             </button>
 
             <div className="flex items-center gap-2">
@@ -130,15 +175,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 className="min-h-[38px] px-3 rounded-full bg-black/55 backdrop-blur-md border border-white/20 text-xs font-semibold text-white inline-flex items-center gap-1.5 hover:bg-black/75"
               >
                 <Camera className="w-3.5 h-3.5 text-amber-300" />
-                <span>Cover / Photo</span>
+                <span>Cover</span>
               </button>
               <button
                 type="button"
-                onClick={onShareProfile}
-                aria-label="Share Profile"
-                className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/20 flex items-center justify-center text-white hover:bg-black/75"
+                onClick={onOpenSettings}
+                aria-label="Account Settings"
+                className="min-w-[38px] min-h-[38px] rounded-full bg-black/55 backdrop-blur-md border border-white/20 flex items-center justify-center text-amber-300 hover:bg-black/75"
               >
-                <Share2 className="w-4 h-4" />
+                <Settings className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -161,10 +206,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </button>
 
           <div className="mt-3 flex items-center justify-center gap-1.5 flex-wrap">
-            <h1 className="text-xl font-display font-extrabold text-white">
+            <h1 className={`text-xl font-display font-extrabold ${nameStyleClass}`}>
               {profile.username}
             </h1>
-            <BadgeCheck className="w-5 h-5 text-sky-400 fill-sky-400/20" />
+            {profile.isVerified && (
+              <BadgeCheck className="w-5 h-5 text-sky-400 fill-sky-400/20" />
+            )}
             <LevelBadge level={clampedLevel} size="sm" onClick={onOpenLevels} />
             {equippedBadge && (
               <span className="px-2 py-0.5 rounded-full bg-purple-900/75 border border-amber-400/50 text-[10px] font-bold text-amber-200">
@@ -173,18 +220,29 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={handleCopyId}
-            className="mt-1 inline-flex items-center gap-1.5 text-xs text-slate-300 hover:text-amber-300 transition-colors font-mono-num"
-          >
-            <span>ID: {profile.userId}</span>
-            {copiedId ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-            ) : (
-              <Copy className="w-3.5 h-3.5 opacity-75" />
-            )}
-          </button>
+          <div className="mt-1 flex items-center justify-center gap-3 text-xs text-slate-300 flex-wrap">
+            <button
+              type="button"
+              onClick={handleCopyId}
+              className="inline-flex items-center gap-1 hover:text-amber-300 transition-colors font-mono-num"
+            >
+              <span>ID: {profile.userId}</span>
+              {copiedId ? (
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 opacity-75" />
+              )}
+            </button>
+            <span className="text-slate-500">·</span>
+            <span className="inline-flex items-center gap-1 text-slate-400 font-mono-num">
+              <Eye className="w-3.5 h-3.5 text-purple-300" />{' '}
+              {profile.totalProfileViews.toLocaleString()} views
+            </span>
+            <span className="text-slate-500">·</span>
+            <span className="text-slate-400 capitalize">
+              {profile.profilePrivacy} · Joined {profile.accountCreatedAt}
+            </span>
+          </div>
 
           {profile.bio && (
             <p className="mt-2 text-xs sm:text-sm text-slate-300 max-w-md">
@@ -192,29 +250,35 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </p>
           )}
 
-          {/* Followers / Following / Likes */}
-          <div className="mt-3.5 w-full max-w-md grid grid-cols-3 divide-x divide-purple-500/20 py-2">
+          {/* Profile Statistics Row */}
+          <div className="mt-3.5 w-full max-w-lg grid grid-cols-4 divide-x divide-purple-500/20 py-2 rounded-2xl bg-[#110822]/70 border border-purple-500/20">
             <div>
-              <div className="text-lg font-display font-bold text-white font-mono-num">
+              <div className="text-base font-display font-bold text-white font-mono-num">
                 {profile.followers}
               </div>
-              <div className="text-xs text-slate-400">Followers</div>
+              <div className="text-[11px] text-slate-400">Followers</div>
             </div>
             <div>
-              <div className="text-lg font-display font-bold text-white font-mono-num">
+              <div className="text-base font-display font-bold text-white font-mono-num">
                 {profile.following}
               </div>
-              <div className="text-xs text-slate-400">Following</div>
+              <div className="text-[11px] text-slate-400">Following</div>
             </div>
             <div>
-              <div className="text-lg font-display font-bold text-white font-mono-num">
+              <div className="text-base font-display font-bold text-white font-mono-num">
                 {profile.likes}
               </div>
-              <div className="text-xs text-slate-400">Likes</div>
+              <div className="text-[11px] text-slate-400">Likes</div>
+            </div>
+            <div>
+              <div className="text-base font-display font-bold text-amber-300 font-mono-num">
+                {profile.liveSessionsCount}
+              </div>
+              <div className="text-[11px] text-slate-400">Lives</div>
             </div>
           </div>
 
-          <div className="mt-2 w-full max-w-md grid grid-cols-2 gap-2.5">
+          <div className="mt-2.5 w-full max-w-md grid grid-cols-2 gap-2.5">
             <button
               type="button"
               onClick={onEditProfile}
@@ -236,7 +300,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
         {/* Complete Profile Dashboard Cards */}
         <section className="px-4 mt-5 space-y-3.5 max-w-2xl mx-auto">
-          {/* 13.1 Level Card (Levels 1-99 only) */}
+          {/* Level Card (Levels 1-99 only) */}
           <button
             type="button"
             onClick={onOpenLevels}
@@ -270,9 +334,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </span>
               </div>
               <div>
-                <span className="text-slate-400 block">Next Level Req</span>
+                <span className="text-slate-400 block">Videos / Gifts</span>
                 <span className="text-amber-300 font-bold">
-                  {nextXp.toLocaleString()} XP
+                  {myVideos.length} · {profile.giftsReceivedCount}
                 </span>
               </div>
               <div className="text-right">
@@ -284,7 +348,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
           </button>
 
-          {/* 13.2 VIP Member Card & 13.3 Super VIP (SVIP) Card */}
+          {/* VIP Member Card & Super VIP (SVIP) Card */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button
               type="button"
@@ -300,7 +364,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </span>
               </div>
               <div className="flex items-center justify-between text-[11px] text-slate-300">
-                <span>Frames Collected: {ownedFramesCount}</span>
+                <span>Frames Owned: {ownedFrames.length}</span>
                 <span className="text-amber-200">Next: VIP {profile.vipLevel + 1}</span>
               </div>
             </button>
@@ -319,122 +383,231 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </span>
               </div>
               <div className="flex items-center justify-between text-[11px] text-slate-300">
-                <span>Animated Assets: {ownedAnimatedAssetsCount}</span>
+                <span>Assets Owned: {ownedSpecialAssets.length + ownedEntries.length}</span>
                 <span className="text-fuchsia-200">Next: SVIP {profile.svipLevel + 1}</span>
               </div>
             </button>
           </div>
 
-          {/* 13.4 Achievement Badges Strip */}
-          <div className="rounded-2xl mizo-royal-card p-3.5 space-y-2.5">
+          {/* Profile Assets Inventory (Frames, Entries, Badges, Gifts) */}
+          <div className="rounded-2xl mizo-royal-card p-3.5 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-display font-bold text-white inline-flex items-center gap-1.5">
-                <Award className="w-4 h-4 text-amber-400" />
-                Achievement Badges
+                <Gift className="w-4 h-4 text-amber-400" />
+                My Profile Assets &amp; Collection
               </span>
               <button
                 type="button"
-                onClick={onOpenAchievements}
-                className="text-xs font-semibold text-amber-300 hover:underline inline-flex items-center gap-0.5"
+                onClick={onOpenStore}
+                className="text-xs font-semibold text-amber-300 hover:underline"
               >
-                <span>Badge Vault</span>
-                <ChevronRight className="w-3.5 h-3.5" />
+                Open Store
               </button>
             </div>
 
-            <div className="grid grid-cols-4 gap-2">
-              {achievements.map((badge) => (
+            <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-[#100820]">
+              {(
+                [
+                  ['frames', `Frames (${ownedFrames.length})`],
+                  ['entries', `Entries (${ownedEntries.length})`],
+                  ['badges', `Badges (${achievements.filter((a) => a.earned).length})`],
+                  ['gifts', `Assets (${ownedSpecialAssets.length})`],
+                ] as const
+              ).map(([k, label]) => (
                 <button
-                  key={badge.id}
+                  key={k}
                   type="button"
-                  onClick={onOpenAchievements}
-                  className={`p-2 rounded-xl border text-center flex flex-col items-center gap-1 ${
-                    badge.equipped
-                      ? 'bg-[#26114B] border-amber-400'
-                      : badge.earned
-                      ? 'bg-[#170C2E] border-purple-500/35'
-                      : 'bg-[#0D071A] border-purple-500/15 opacity-60'
+                  onClick={() => setAssetTab(k)}
+                  className={`py-1.5 rounded-lg text-[10.5px] font-bold ${
+                    assetTab === k
+                      ? 'mizo-purple-gradient text-white'
+                      : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-lg">{badge.icon}</span>
-                  <span className="text-[10px] font-bold text-white truncate max-w-full">
-                    {badge.name}
-                  </span>
+                  {label}
                 </button>
               ))}
             </div>
+
+            {assetTab === 'frames' && (
+              <div className="grid grid-cols-2 gap-2">
+                {ownedFrames.length === 0 ? (
+                  <p className="col-span-2 text-xs text-slate-400 text-center py-2">
+                    No frames unlocked yet. Visit Store!
+                  </p>
+                ) : (
+                  ownedFrames.map((f) => {
+                    const equipped = profile.equippedFrameId === f.id;
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => onToggleEquipStoreItem(f)}
+                        className={`p-2.5 rounded-xl border text-left text-xs flex items-center justify-between ${
+                          equipped
+                            ? 'bg-purple-900/50 border-amber-400 text-amber-200'
+                            : 'bg-[#140A28] border-purple-500/25 text-white'
+                        }`}
+                      >
+                        <span className="truncate font-bold">{f.name}</span>
+                        <span className="text-[10px] font-extrabold shrink-0">
+                          {equipped ? 'Equipped' : 'Equip'}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {assetTab === 'entries' && (
+              <div className="grid grid-cols-2 gap-2">
+                {ownedEntries.length === 0 ? (
+                  <p className="col-span-2 text-xs text-slate-400 text-center py-2">
+                    Unlock Special Entry effects in Mizo Store.
+                  </p>
+                ) : (
+                  ownedEntries.map((e) => {
+                    const equipped = profile.equippedEntryId === e.id;
+                    return (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() => onToggleEquipStoreItem(e)}
+                        className={`p-2.5 rounded-xl border text-left text-xs flex items-center justify-between ${
+                          equipped
+                            ? 'bg-purple-900/50 border-amber-400 text-amber-200'
+                            : 'bg-[#140A28] border-purple-500/25 text-white'
+                        }`}
+                      >
+                        <span className="truncate font-bold">{e.name}</span>
+                        <span className="text-[10px] font-extrabold shrink-0">
+                          {equipped ? 'Equipped' : 'Equip'}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {assetTab === 'badges' && (
+              <div className="grid grid-cols-4 gap-2">
+                {achievements.map((badge) => (
+                  <button
+                    key={badge.id}
+                    type="button"
+                    onClick={onOpenAchievements}
+                    className={`p-2 rounded-xl border text-center flex flex-col items-center gap-1 ${
+                      badge.equipped
+                        ? 'bg-[#26114B] border-amber-400'
+                        : badge.earned
+                        ? 'bg-[#170C2E] border-purple-500/35'
+                        : 'bg-[#0D071A] border-purple-500/15 opacity-60'
+                    }`}
+                  >
+                    <span className="text-lg">{badge.icon}</span>
+                    <span className="text-[10px] font-bold text-white truncate max-w-full">
+                      {badge.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {assetTab === 'gifts' && (
+              <div className="grid grid-cols-2 gap-2">
+                {ownedSpecialAssets.length === 0 ? (
+                  <p className="col-span-2 text-xs text-slate-400 text-center py-2">
+                    Collect Profile Decorations, Name Decorations &amp; Badges in Store.
+                  </p>
+                ) : (
+                  ownedSpecialAssets.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => onToggleEquipStoreItem(a)}
+                      className="p-2.5 rounded-xl bg-[#140A28] border border-purple-500/25 text-left text-xs flex items-center justify-between text-white"
+                    >
+                      <span className="truncate font-bold">{a.name}</span>
+                      <span className="text-[10px] text-amber-300 font-bold shrink-0">Use</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
-          {/* 13.5 Four Profile Shortcuts: Top Achievements, Agency, Wallet, Rankings */}
-          <div className="grid grid-cols-4 gap-2.5">
-            <button
-              type="button"
+          {/* 7 Profile Shortcuts */}
+          <div className="grid grid-cols-4 gap-2">
+            <ShortcutTile
+              icon={<Trophy className="w-5 h-5 text-amber-400" />}
+              label="Achievements"
               onClick={onOpenAchievements}
-              className="rounded-2xl mizo-royal-card p-3 flex flex-col items-center gap-1.5 hover:border-amber-400/60 transition-colors"
-            >
-              <Trophy className="w-5 h-5 text-amber-400" />
-              <span className="text-[10.5px] font-bold text-white text-center leading-tight">
-                Top Achievements
-              </span>
-            </button>
-
-            <button
-              type="button"
+            />
+            <ShortcutTile
+              icon={<Building2 className="w-5 h-5 text-purple-300" />}
+              label="Agency"
               onClick={onOpenAgency}
-              className="rounded-2xl mizo-royal-card p-3 flex flex-col items-center gap-1.5 hover:border-amber-400/60 transition-colors"
-            >
-              <Building2 className="w-5 h-5 text-purple-300" />
-              <span className="text-[10.5px] font-bold text-white text-center leading-tight">
-                Agency
-              </span>
-            </button>
-
-            <button
-              type="button"
+            />
+            <ShortcutTile
+              icon={<Coins className="w-5 h-5 text-amber-300" />}
+              label="Wallet"
               onClick={onOpenWallet}
-              className="rounded-2xl mizo-royal-card p-3 flex flex-col items-center gap-1.5 hover:border-amber-400/60 transition-colors"
-            >
-              <Coins className="w-5 h-5 text-amber-300" />
-              <span className="text-[10.5px] font-bold text-white text-center leading-tight">
-                Wallet
-              </span>
-            </button>
-
-            <button
-              type="button"
+            />
+            <ShortcutTile
+              icon={<Crown className="w-5 h-5 text-fuchsia-400" />}
+              label="Rankings"
               onClick={onOpenRankings}
-              className="rounded-2xl mizo-royal-card p-3 flex flex-col items-center gap-1.5 hover:border-amber-400/60 transition-colors"
-            >
-              <Crown className="w-5 h-5 text-fuchsia-400" />
-              <span className="text-[10.5px] font-bold text-white text-center leading-tight">
-                Rankings
-              </span>
-            </button>
+            />
+            <ShortcutTile
+              icon={<History className="w-5 h-5 text-emerald-300" />}
+              label="Transactions"
+              onClick={onOpenWallet}
+            />
+            <ShortcutTile
+              icon={<PhoneCall className="w-5 h-5 text-sky-300" />}
+              label="Call History"
+              onClick={onOpenCallHistory}
+            />
+            <ShortcutTile
+              icon={<Award className="w-5 h-5 text-amber-200" />}
+              label="Level 1-99"
+              onClick={onOpenLevels}
+            />
+            <ShortcutTile
+              icon={<Settings className="w-5 h-5 text-purple-200" />}
+              label="Settings"
+              onClick={onOpenSettings}
+            />
           </div>
         </section>
 
-        {/* 13.6 Video Showcase: Public | Private | Saved + Upload */}
+        {/* 5 Profile Video Tabs: Public | Private | Saved | Liked | Reposted */}
         <section className="px-4 mt-5 space-y-4 max-w-4xl mx-auto">
-          <div className="flex items-center justify-between gap-2 max-w-2xl mx-auto">
-            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-[#120A22] border border-purple-500/25 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1 p-1 rounded-2xl bg-[#120A22] border border-purple-500/25 flex-1 overflow-x-auto no-scrollbar">
               {(
                 [
-                  ['public', `Public (${publicVideos.length})`],
-                  ['private', `Private (${privateVideos.length})`],
-                  ['saved', `Saved (${savedVideos.length})`],
+                  ['public', `Public (${publicVideos.length})`, Film],
+                  ['private', `Private (${privateVideos.length})`, Lock],
+                  ['saved', `Saved (${savedVideos.length})`, Bookmark],
+                  ['liked', `Liked (${likedVideos.length})`, Heart],
+                  ['reposted', `Reposted (${repostedVideos.length})`, Repeat2],
                 ] as const
-              ).map(([key, label]) => (
+              ).map(([key, label, Icon]) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setVideoTab(key)}
-                  className={`py-2 px-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                  className={`py-2 px-2.5 rounded-xl text-[11px] font-bold transition-all whitespace-nowrap inline-flex items-center gap-1 shrink-0 ${
                     videoTab === key
                       ? 'mizo-gold-gradient text-[#1E0B3B] shadow'
                       : 'text-slate-300 hover:text-white'
                   }`}
                 >
-                  {label}
+                  <Icon className="w-3 h-3" />
+                  <span>{label}</span>
                 </button>
               ))}
             </div>
@@ -451,26 +624,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
           {currentVideos.length === 0 ? (
             <div className="max-w-2xl mx-auto mizo-royal-card rounded-2xl p-8 text-center">
-              {videoTab === 'saved' ? (
-                <Bookmark className="w-8 h-8 text-purple-300 mx-auto mb-2 opacity-75" />
-              ) : videoTab === 'private' ? (
-                <Lock className="w-8 h-8 text-purple-300 mx-auto mb-2 opacity-75" />
-              ) : (
-                <Film className="w-8 h-8 text-purple-300 mx-auto mb-2 opacity-75" />
-              )}
-              <p className="text-sm font-semibold text-white">
-                {videoTab === 'public'
-                  ? 'No public videos yet'
-                  : videoTab === 'private'
-                  ? 'No private videos yet'
-                  : 'No saved videos yet'}
+              <Film className="w-8 h-8 text-purple-300 mx-auto mb-2 opacity-75" />
+              <p className="text-sm font-semibold text-white capitalize">
+                No {videoTab} videos yet
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                {videoTab === 'saved'
-                  ? 'Tap Save on any clip in the Videos tab to bookmark it here.'
-                  : 'Share your first moment with the Mizo Live community.'}
+                Explore the Videos tab to like, save, or repost moments, or upload your own clip.
               </p>
-              {videoTab !== 'saved' && (
+              {(videoTab === 'public' || videoTab === 'private') && (
                 <button
                   type="button"
                   onClick={onOpenCreateVideo}
@@ -539,3 +700,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     </div>
   );
 };
+
+const ShortcutTile: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}> = ({ icon, label, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="rounded-2xl mizo-royal-card p-2.5 flex flex-col items-center gap-1.5 hover:border-amber-400/60 transition-colors"
+  >
+    {icon}
+    <span className="text-[10px] font-bold text-white text-center leading-tight truncate max-w-full">
+      {label}
+    </span>
+  </button>
+);

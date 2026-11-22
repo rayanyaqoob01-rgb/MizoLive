@@ -192,9 +192,9 @@ export const StoreCard: React.FC<StoreCardProps> = ({
   onBuy,
 }) => {
   const actionLabel = isEquipped
-    ? 'Selected'
+    ? 'Equipped'
     : item.owned
-    ? 'Select'
+    ? 'Equip'
     : 'Buy';
 
   return (
@@ -205,7 +205,7 @@ export const StoreCard: React.FC<StoreCardProps> = ({
             <Sparkles className="w-2.5 h-2.5" /> Animated
           </span>
         )}
-        {item.category === 'VIP Frames' ? (
+        {item.category === 'VIP Frames' || item.category === 'Animated Frames' ? (
           <div className="relative w-16 h-16 flex items-center justify-center animate-mizo-float">
             <SafeImage
               src={userAvatar}

@@ -1,16 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Ban,
   Clock,
+  Crown,
   Eye,
+  Flag,
   Gift,
   Heart,
   Info,
+  MicOff,
   Minimize2,
   Send,
   Share2,
+  Shield,
   Sliders,
   Swords,
   Trophy,
+  UserMinus,
   Users,
   X,
 } from 'lucide-react';
@@ -21,6 +27,7 @@ import { LevelBadge } from '../components/LevelBadge';
 import { PkBattleStage, PkInvitePanel } from '../components/PkBattle';
 import { UserInfoTarget } from '../components/UserInfoModal';
 import { SAMPLE_ROOM_PARTICIPANTS } from '../data/mizoData';
+import { agoraService, AgoraStatus } from '../services/agoraService';
 import {
   GiftHistoryRecord,
   GiftItem,
@@ -28,6 +35,7 @@ import {
   LiveSessionSummary,
   LiveStream,
   PkOpponent,
+  RoomParticipant,
 } from '../types/mizo';
 
 interface LiveRoomScreenProps {
@@ -37,12 +45,15 @@ interface LiveRoomScreenProps {
   userCoins: number;
   username: string;
   userLevel: number;
+  userVipLevel?: number;
   onMinimize: () => void;
   onCloseViewer: () => void;
   onCompleteEndLive: (summary: LiveSessionSummary) => void;
   onSendGift: (gift: GiftItem, recipient: string) => Promise<boolean>;
   onOpenUserInfo: (user: UserInfoTarget) => void;
   onAddActivityXp: (amount: number) => void;
+  onBlockUser?: (name: string, reason: string) => void;
+  onReportTarget?: (targetName: string, targetType: 'live' | 'user', reason: string) => void;
 }
 
 interface FloatingHeart {
@@ -57,33 +68,43 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
   userCoins,
   username,
   userLevel,
+  userVipLevel = 0,
   onMinimize,
   onCloseViewer,
   onCompleteEndLive,
   onSendGift,
   onOpenUserInfo,
   onAddActivityXp,
+  onBlockUser,
+  onReportTarget,
 }) => {
   const [elapsedSec, setElapsedSec] = useState(isHost ? 0 : 254);
   const [likesCount, setLikesCount] = useState(isHost ? 24 : 1840);
   const [floatingHearts, setFloatingHearts] = useState<FloatingHeart[]>([]);
   const [following, setFollowing] = useState(false);
 
-  // Live Chat
+  // Live Chat (with VIP badges + Moderation)
   const [chatInput, setChatInput] = useState('');
+  const [chatPaused, setChatPaused] = useState(false);
   const [chatMessages, setChatMessages] = useState<
-    Array<{ id: string; user: string; level: number; text: string }>
+    Array<{ id: string; user: string; level: number; vip?: number; text: string }>
   >([
-    { id: 'lc-1', user: 'Aarav', level: 19, text: 'Welcome to the live stage!' },
-    { id: 'lc-2', user: 'Cute Queen', level: 64, text: 'Golden vibes tonight!' },
+    { id: 'lc-1', user: 'Aarav', level: 19, vip: 1, text: 'Welcome to the live stage!' },
+    { id: 'lc-2', user: 'Cute Queen', level: 64, vip: 4, text: 'Golden vibes tonight!' },
   ]);
 
-  // Panels & Info
+  // Panels, Leaderboard & Info
   const [giftPanelOpen, setGiftPanelOpen] = useState(false);
   const [giftHistory, setGiftHistory] = useState<GiftHistoryRecord[]>([]);
   const [activeGiftBanner, setActiveGiftBanner] = useState<GiftHistoryRecord | null>(null);
   const [roomInfoOpen, setRoomInfoOpen] = useState(false);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [participants, setParticipants] = useState<RoomParticipant[]>(SAMPLE_ROOM_PARTICIPANTS);
   const [shareToast, setShareToast] = useState(false);
+
+  // Agora RTC Live State
+  const [agoraStatus, setAgoraStatus] = useState<AgoraStatus>('idle');
+  const [agoraNote, setAgoraNote] = useState<string>('');
 
   // Host-only Real Camera / Microphone Controls (strictly hidden for viewers)
   const [hostControlsOpen, setHostControlsOpen] = useState(false);
@@ -92,6 +113,7 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
     facingMode: 'front',
     rotationDeg: 0,
     micOn: true,
+    flashOn: false,
     filter: 'Natural',
     effect: 'None',
     backgroundEffect: 'None',
@@ -127,36 +149,56 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
       mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
     }
+    agoraService.leaveSession(`live-${stream.id}`);
   };
 
-  // Acquire real getUserMedia camera & microphone stream for Host
+  // Connect Agora Live Channel + Host getUserMedia Camera/Mic
   useEffect(() => {
-    if (!isHost) return;
     let cancelled = false;
+    const sessionId = `live-${stream.id}`;
 
-    const initMedia = async () => {
-      try {
-        const media = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: hostControls.facingMode === 'front' ? 'user' : 'environment' },
-          audio: true,
-        });
-        if (cancelled) {
-          media.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        mediaStreamRef.current = media;
-        setMediaStatus('active');
-        if (hostVideoRef.current) {
-          hostVideoRef.current.srcObject = media;
-        }
-      } catch {
-        if (!cancelled) {
-          setMediaStatus('denied');
-        }
-      }
-    };
+    agoraService.startSession({
+      sessionId,
+      kind: 'live',
+      channelName: `mizo_live_${stream.id}`,
+      role: isHost ? 'host' : 'audience',
+      enableAudio: isHost,
+      enableVideo: isHost,
+      events: {
+        onStatusChange: (status, detail) => {
+          if (!cancelled) {
+            setAgoraStatus(status);
+            setAgoraNote(detail);
+          }
+        },
+      },
+    });
 
-    initMedia();
+    if (isHost) {
+      const initMedia = async () => {
+        try {
+          const media = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: hostControls.facingMode === 'front' ? 'user' : 'environment' },
+            audio: true,
+          });
+          if (cancelled) {
+            media.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          mediaStreamRef.current = media;
+          setMediaStatus('active');
+          if (hostVideoRef.current) {
+            hostVideoRef.current.srcObject = media;
+          }
+        } catch {
+          if (!cancelled) {
+            setMediaStatus('denied');
+          }
+        }
+      };
+      initMedia();
+    }
+
     return () => {
       cancelled = true;
       stopAllHostTracks();
@@ -176,20 +218,25 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
 
   // Sync real track.enabled for Camera & Microphone
   useEffect(() => {
-    if (!isHost || !mediaStreamRef.current) return;
-    mediaStreamRef.current.getVideoTracks().forEach((t) => {
-      t.enabled = hostControls.cameraOn;
-    });
-    mediaStreamRef.current.getAudioTracks().forEach((t) => {
-      t.enabled = hostControls.micOn;
-    });
-  }, [isHost, hostControls.cameraOn, hostControls.micOn]);
+    if (!isHost) return;
+    agoraService.setCameraEnabled(`live-${stream.id}`, hostControls.cameraOn);
+    agoraService.setMicEnabled(`live-${stream.id}`, hostControls.micOn);
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getVideoTracks().forEach((t) => {
+        t.enabled = hostControls.cameraOn;
+      });
+      mediaStreamRef.current.getAudioTracks().forEach((t) => {
+        t.enabled = hostControls.micOn;
+      });
+    }
+  }, [isHost, hostControls.cameraOn, hostControls.micOn, stream.id]);
 
   // Real Front / Rear Camera Switch
   const prevFacingRef = useRef<'front' | 'rear'>(hostControls.facingMode);
   useEffect(() => {
     if (!isHost || prevFacingRef.current === hostControls.facingMode) return;
     prevFacingRef.current = hostControls.facingMode;
+    agoraService.switchCamera(`live-${stream.id}`);
     if (!mediaStreamRef.current) return;
 
     const switchCamera = async () => {
@@ -213,12 +260,12 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
           hostVideoRef.current.srcObject = mediaStreamRef.current;
         }
       } catch {
-        // Device has single camera; keep existing track active
+        // Single camera device fallback
       }
     };
 
     switchCamera();
-  }, [isHost, hostControls.facingMode]);
+  }, [isHost, hostControls.facingMode, stream.id]);
 
   // Live duration timer
   useEffect(() => {
@@ -255,6 +302,12 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
     return `${m}:${s}`;
   };
 
+  const handleToggleFlash = async () => {
+    const next = !hostControls.flashOn;
+    const res = await agoraService.setTorch(`live-${stream.id}`, next, mediaStreamRef.current);
+    setHostControls((prev) => ({ ...prev, flashOn: res.supported ? res.active : next }));
+  };
+
   const spawnFloatingHeart = () => {
     const id = Date.now() + Math.random();
     const leftPct = 65 + Math.random() * 25;
@@ -265,7 +318,6 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
     }, 1100);
   };
 
-  // Accurate double-tap heart burst with duplicate cooldown guard
   const handleStageTap = () => {
     const now = Date.now();
     if (now - lastTapRef.current < 280) {
@@ -281,10 +333,16 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
 
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || chatPaused) return;
     setChatMessages((prev) => [
       ...prev.slice(-20),
-      { id: `lc-${Date.now()}`, user: username, level: userLevel, text: chatInput.trim() },
+      {
+        id: `lc-${Date.now()}`,
+        user: username,
+        level: userLevel,
+        vip: userVipLevel,
+        text: chatInput.trim(),
+      },
     ]);
     setChatInput('');
     onAddActivityXp(15);
@@ -381,10 +439,20 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
       : undefined,
   };
 
+  // Gift Leaderboard aggregation
+  const leaderboard = Object.entries(
+    giftHistory.reduce<Record<string, number>>((acc, g) => {
+      acc[g.senderName] = (acc[g.senderName] || 0) + g.giftPrice;
+      return acc;
+    }, { 'King Rayan': 1200, 'Cute Queen': 850 })
+  )
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
   return (
     <div className="fixed inset-0 z-50 bg-[#05030A] flex items-center justify-center sm:p-4">
       <div className="relative w-full h-full sm:h-[90vh] sm:max-w-[460px] sm:rounded-3xl overflow-hidden bg-[#090412] border-0 sm:border sm:border-purple-500/40 flex flex-col shadow-[0_0_60px_rgba(147,51,234,0.35)]">
-        {/* Live Video Stage Backdrop (Dedicated Live Feed — Never Uploaded Videos) */}
+        {/* Live Video Stage Backdrop */}
         <div
           onClick={handleStageTap}
           className="absolute inset-0 cursor-pointer select-none overflow-hidden"
@@ -428,7 +496,6 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
             </div>
           )}
 
-          {/* Host Visual & Background Effects */}
           {isHost && hostControls.backgroundEffect === 'Royal Stage' && (
             <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top,rgba(147,51,234,0.35),transparent_55%)]" />
           )}
@@ -447,7 +514,7 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
           <div className="absolute inset-0 bg-gradient-to-b from-black/75 via-transparent to-black/90 pointer-events-none" />
         </div>
 
-        {/* Top Bar: Host Info, Viewers, Duration, Room Info, Minimize, Exit */}
+        {/* Top Bar */}
         <header className="relative z-20 p-3 pt-safe flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 bg-black/55 backdrop-blur-md rounded-full pl-1.5 pr-3 py-1 border border-white/15 min-w-0">
             <button
@@ -500,12 +567,20 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setLeaderboardOpen(true)}
+              aria-label="Gift Leaderboard"
+              className="w-8 h-8 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-amber-300"
+            >
+              <Trophy className="w-4 h-4" />
+            </button>
             <button
               type="button"
               onClick={onMinimize}
               aria-label="Minimize live stream"
-              className="w-9 h-9 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-amber-300 hover:border-amber-400"
+              className="w-8 h-8 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-amber-300 hover:border-amber-400"
             >
               <Minimize2 className="w-4 h-4" />
             </button>
@@ -513,7 +588,7 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
               type="button"
               onClick={() => setRoomInfoOpen(true)}
               aria-label="Room information"
-              className="w-9 h-9 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:border-amber-400"
+              className="w-8 h-8 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:border-amber-400"
             >
               <Info className="w-4 h-4" />
             </button>
@@ -521,21 +596,32 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
               type="button"
               onClick={() => (isHost ? setEndLiveDialogOpen(true) : onCloseViewer())}
               aria-label={isHost ? 'End Live Stream' : 'Leave Live Stream'}
-              className="w-9 h-9 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-rose-600/80"
+              className="w-8 h-8 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-rose-600/80"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </header>
 
-        {/* Sub-Header Status: Live Title + Host-Only Controls / PK */}
+        {/* Sub-Header Status: Live Title + Agora Status + Host-Only Controls / PK */}
         <div className="relative z-20 px-3 flex items-center justify-between gap-2 flex-wrap">
-          <span className="text-[11px] text-purple-200 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full border border-purple-400/30">
-            {stream.title}
-            {isHost && !hostControls.micOn ? ' · Mic Muted' : ''}
-          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] text-purple-200 bg-black/50 backdrop-blur-md px-2.5 py-1 rounded-full border border-purple-400/30">
+              {stream.title}
+              {isHost && !hostControls.micOn ? ' · Mic Muted' : ''}
+            </span>
+            <span
+              title={agoraNote}
+              className="text-[10px] text-amber-200 bg-black/55 px-2 py-0.5 rounded-full border border-white/10"
+            >
+              {agoraStatus === 'connected'
+                ? 'Agora Live HD'
+                : agoraStatus === 'credentials_required'
+                ? 'Agora Keys Pending'
+                : `RTC: ${agoraStatus}`}
+            </span>
+          </div>
 
-          {/* STRICTLY HOST-ONLY BUTTONS */}
           {isHost && (
             <div className="flex items-center gap-1.5">
               <button
@@ -558,10 +644,9 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
           )}
         </div>
 
-        {/* PK Battle Split Stage (Two Live Feeds + Countdown + Scores + Winner) */}
+        {/* PK Battle Split Stage */}
         {activePkOpponent && (
           <div className="relative z-20 space-y-2">
-            {/* Two Split Live Video Feeds */}
             <div className="mx-3 mt-2 grid grid-cols-2 gap-1.5 rounded-2xl overflow-hidden border border-amber-400/50 bg-black h-36">
               <div className="relative h-full bg-[#120726]">
                 {isHost && mediaStatus === 'active' && hostControls.cameraOn ? (
@@ -658,7 +743,6 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
 
         {/* Bottom Chat & Action Bar */}
         <div className="relative z-20 mt-auto p-3 pb-safe space-y-2.5">
-          {/* Chat Feed with Level Badges */}
           <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
             {chatMessages.map((msg) => (
               <div
@@ -666,6 +750,11 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
                 className="self-start max-w-[90%] rounded-xl bg-black/55 backdrop-blur-md px-2.5 py-1.5 text-xs border border-white/10 inline-flex items-center gap-1.5 flex-wrap"
               >
                 <LevelBadge level={msg.level} size="xs" />
+                {msg.vip && msg.vip > 0 && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 text-[9px] font-extrabold inline-flex items-center gap-0.5">
+                    <Crown className="w-2.5 h-2.5" /> VIP{msg.vip}
+                  </span>
+                )}
                 <span className="font-bold text-amber-300">{msg.user}:</span>
                 <span className="text-slate-100">{msg.text}</span>
               </div>
@@ -676,10 +765,11 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
             <form onSubmit={handleSendChat} className="flex-1 flex items-center gap-1.5">
               <input
                 type="text"
+                disabled={chatPaused}
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Chat (double-tap live to like)..."
-                className="flex-1 h-11 px-3.5 rounded-full bg-black/60 backdrop-blur-md border border-purple-400/35 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-400"
+                placeholder={chatPaused ? 'Chat paused by host' : 'Chat (double-tap live to like)...'}
+                className="flex-1 h-11 px-3.5 rounded-full bg-black/60 backdrop-blur-md border border-purple-400/35 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-400 disabled:opacity-50"
               />
               <button
                 type="submit"
@@ -690,7 +780,6 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
               </button>
             </form>
 
-            {/* Compact Floating Gift Box Button */}
             <button
               type="button"
               onClick={() => setGiftPanelOpen(true)}
@@ -700,7 +789,6 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
               <Gift className="w-5 h-5" />
             </button>
 
-            {/* Share */}
             <button
               type="button"
               onClick={() => {
@@ -713,7 +801,6 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
               <Share2 className="w-4 h-4" />
             </button>
 
-            {/* Quick Heart */}
             <button
               type="button"
               onClick={spawnFloatingHeart}
@@ -732,14 +819,51 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
           </div>
         )}
 
-        {/* Room Information & Participation Sheet */}
+        {/* Live Gift Leaderboard & Gift Collection */}
+        {leaderboardOpen && (
+          <div className="absolute inset-x-0 bottom-0 z-40 rounded-t-3xl bg-[#0D061B]/95 backdrop-blur-2xl border-t border-amber-400/40 p-5 pb-safe space-y-3.5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-display font-bold text-white inline-flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-amber-400" />
+                <span>Live Gift Leaderboard</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setLeaderboardOpen(false)}
+                className="w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center text-slate-300"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {leaderboard.map(([name, coins], idx) => (
+                <div
+                  key={name}
+                  className="flex items-center justify-between p-2.5 rounded-xl bg-[#160B2C] border border-purple-500/20 text-xs"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full mizo-gold-gradient text-[#1E0B3B] font-extrabold text-[10px] flex items-center justify-center">
+                      {idx + 1}
+                    </span>
+                    <span className="font-bold text-white">{name}</span>
+                  </div>
+                  <span className="font-mono-num font-bold text-amber-300 inline-flex items-center gap-1">
+                    <GoldCoinIcon size={12} /> {coins.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Viewer Management, Moderators, Stats, Block & Report Sheet */}
         {roomInfoOpen && (
-          <div className="absolute inset-x-0 bottom-0 z-40 rounded-t-3xl bg-[#0D061B]/95 backdrop-blur-2xl border-t border-purple-500/40 p-5 pb-safe space-y-4">
+          <div className="absolute inset-x-0 bottom-0 z-40 rounded-t-3xl bg-[#0D061B]/95 backdrop-blur-2xl border-t border-purple-500/40 p-5 pb-safe space-y-4 max-h-[75%] overflow-y-auto">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Users className="w-4 h-4 text-amber-400" />
                 <h3 className="text-sm font-display font-bold text-white">
-                  Live Info &amp; Participants
+                  Live Stats &amp; Viewer Management
                 </h3>
               </div>
               <button
@@ -750,23 +874,118 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-slate-300">{stream.roomTopic || stream.title}</p>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {SAMPLE_ROOM_PARTICIPANTS.map((p) => (
+
+            {/* Live Statistics Summary */}
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="p-2 rounded-xl bg-[#160B2C] border border-purple-500/25">
+                <p className="text-[10px] text-slate-400">Viewers</p>
+                <p className="font-mono-num font-bold text-white">{stream.viewerDisplay}</p>
+              </div>
+              <div className="p-2 rounded-xl bg-[#160B2C] border border-purple-500/25">
+                <p className="text-[10px] text-slate-400">Likes</p>
+                <p className="font-mono-num font-bold text-rose-300">{likesCount}</p>
+              </div>
+              <div className="p-2 rounded-xl bg-[#160B2C] border border-purple-500/25">
+                <p className="text-[10px] text-slate-400">Comments</p>
+                <p className="font-mono-num font-bold text-amber-300">{chatMessages.length}</p>
+              </div>
+            </div>
+
+            {isHost && (
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#160B2C] border border-amber-400/30 text-xs">
+                <span className="font-semibold text-white">Live Chat Moderation</span>
+                <button
+                  type="button"
+                  onClick={() => setChatPaused((p) => !p)}
+                  className={`px-3 py-1 rounded-lg font-bold ${
+                    chatPaused ? 'bg-rose-600 text-white' : 'mizo-gold-gradient text-[#1E0B3B]'
+                  }`}
+                >
+                  {chatPaused ? 'Resume Chat' : 'Pause Chat'}
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {participants.map((p) => (
                 <div
                   key={p.id}
                   className="flex items-center justify-between p-2 rounded-xl bg-[#160B2C] border border-purple-500/20"
                 >
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <SafeImage
                       src={p.avatar}
                       alt={p.name}
-                      className="w-8 h-8 rounded-full object-cover"
+                      className="w-8 h-8 rounded-full object-cover shrink-0"
                     />
-                    <span className="text-xs font-semibold text-white">{p.name}</span>
-                    <LevelBadge level={p.level} size="xs" />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-semibold text-white truncate">{p.name}</span>
+                        <LevelBadge level={p.level} size="xs" />
+                      </div>
+                      <span className="text-[10px] text-amber-300">{p.role}</span>
+                    </div>
                   </div>
-                  <span className="text-[11px] text-amber-300">{p.role}</span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {isHost && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setParticipants((prev) =>
+                              prev.map((x) =>
+                                x.id === p.id
+                                  ? { ...x, role: x.role === 'Moderator' ? 'Listener' : 'Moderator' }
+                                  : x
+                              )
+                            )
+                          }
+                          aria-label={`Moderator toggle ${p.name}`}
+                          className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-amber-300"
+                        >
+                          <Shield className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setParticipants((prev) =>
+                              prev.map((x) => (x.id === p.id ? { ...x, isMuted: !x.isMuted } : x))
+                            )
+                          }
+                          aria-label={`Mute ${p.name}`}
+                          className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-purple-200"
+                        >
+                          <MicOff className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setParticipants((prev) => prev.filter((x) => x.id !== p.id))}
+                          aria-label={`Kick ${p.name}`}
+                          className="w-7 h-7 rounded-lg bg-rose-500/20 flex items-center justify-center text-rose-300"
+                        >
+                          <UserMinus className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onBlockUser?.(p.name, 'Blocked from live stream')}
+                      aria-label={`Block ${p.name}`}
+                      className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center text-slate-300 hover:text-rose-300"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onReportTarget?.(p.name, 'user', 'Reported during live stream')
+                      }
+                      aria-label={`Report ${p.name}`}
+                      className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center text-slate-300 hover:text-amber-300"
+                    >
+                      <Flag className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -783,17 +1002,18 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
           onSendGift={handleGiftPurchase}
         />
 
-        {/* Host Control Panel (strictly host-only) */}
+        {/* Host Control Panel */}
         {isHost && (
           <HostControlPanel
             open={hostControlsOpen}
             controls={hostControls}
             onChange={setHostControls}
+            onToggleFlash={handleToggleFlash}
             onClose={() => setHostControlsOpen(false)}
           />
         )}
 
-        {/* PK Invitation Panel (strictly host-only) */}
+        {/* PK Invitation Panel */}
         {isHost && (
           <PkInvitePanel
             open={pkInviteOpen}
@@ -804,7 +1024,7 @@ export const LiveRoomScreen: React.FC<LiveRoomScreenProps> = ({
           />
         )}
 
-        {/* End Live Confirmation Dialog (Host-only) */}
+        {/* End Live Confirmation Dialog */}
         {isHost && endLiveDialogOpen && (
           <div
             className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-5"

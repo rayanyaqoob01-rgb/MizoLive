@@ -14,6 +14,7 @@ import {
   Video,
   X,
 } from 'lucide-react';
+import { agoraService } from '../services/agoraService';
 import { EconomyConfig } from '../types/mizo';
 import { GoldCoinIcon, SafeImage } from './Cards';
 import { LevelBadge } from './LevelBadge';
@@ -81,7 +82,7 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   const [camOn, setCamOn] = useState(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [seconds, setSeconds] = useState(0);
-  const [mediaStatus, setMediaStatus] = useState<string>('Connecting media...');
+  const [mediaStatus, setMediaStatus] = useState<string>('Connecting Agora RTC...');
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -89,7 +90,10 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
   const peerConnRef = useRef<RTCPeerConnection | null>(null);
 
   // Stop media tracks cleanly
-  const cleanupMedia = () => {
+  const cleanupMedia = (callId?: string) => {
+    if (callId) {
+      agoraService.leaveSession(`call-${callId}`);
+    }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
@@ -100,7 +104,7 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
     }
   };
 
-  // Initialize real getUserMedia + RTCPeerConnection when call becomes active
+  // Initialize Agora RTC session + WebRTC local/remote fallback when call becomes active
   useEffect(() => {
     if (!activeCall) {
       cleanupMedia();
@@ -113,14 +117,41 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
     setMicMuted(false);
     setSpeakerOn(true);
 
-    const startWebRtc = async () => {
+    const startCallMedia = async () => {
+      // 1. Attempt Agora RTC session
+      const agoraRes = await agoraService.startSession({
+        sessionId: `call-${activeCall.callId}`,
+        kind: 'call',
+        channelName: `mizo_call_${activeCall.callId}`,
+        role: 'host',
+        enableAudio: true,
+        enableVideo: activeCall.callType === 'video',
+        events: {
+          onStatusChange: (_status, detail) => {
+            if (!cancelled) setMediaStatus(detail);
+          },
+          onRemoteUsersChange: (users) => {
+            const firstWithVideo = users.find((u) => u.videoTrack);
+            if (firstWithVideo?.videoTrack && remoteVideoRef.current) {
+              firstWithVideo.videoTrack.play(remoteVideoRef.current);
+            }
+          },
+        },
+      });
+
+      if (agoraRes.ok) {
+        if (agoraRes.localVideoTrack && localVideoRef.current) {
+          agoraRes.localVideoTrack.play(localVideoRef.current);
+        }
+        setMediaStatus('Agora RTC Call Connected');
+        return;
+      }
+
+      // 2. Fallback to device WebRTC media when Agora cloud credentials are missing
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
-          video:
-            activeCall.callType === 'video'
-              ? { facingMode }
-              : false,
+          video: activeCall.callType === 'video' ? { facingMode } : false,
         });
 
         if (cancelled) {
@@ -137,7 +168,6 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
         });
         peerConnRef.current = pc;
-
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
         pc.ontrack = (evt) => {
@@ -158,57 +188,51 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
           }
         };
 
-        if (activeCall.direction === 'outgoing') {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(
-              JSON.stringify({
-                type: 'webrtc:offer',
-                callId: activeCall.callId,
-                sdp: offer,
-              })
-            );
-          }
-        }
-
-        setMediaStatus('Real WebRTC & Media Track Active');
+        setMediaStatus(
+          agoraRes.status === 'credentials_required'
+            ? 'Local WebRTC Active (Configure Agora keys on server for cloud routing)'
+            : 'Local WebRTC Media Active'
+        );
       } catch {
-        setMediaStatus('Microphone/camera permission denied or unavailable — timer & server billing active');
+        setMediaStatus('Microphone/camera permission denied — timer & server billing active');
       }
     };
 
-    startWebRtc();
+    startCallMedia();
     return () => {
       cancelled = true;
-      cleanupMedia();
+      cleanupMedia(activeCall.callId);
     };
   }, [activeCall?.callId]);
 
-  // Real microphone mute toggle
-  const toggleMic = () => {
+  const toggleMic = async () => {
     const nextMuted = !micMuted;
     setMicMuted(nextMuted);
+    if (activeCall) {
+      await agoraService.setMicEnabled(`call-${activeCall.callId}`, !nextMuted);
+    }
     localStreamRef.current?.getAudioTracks().forEach((t) => {
       t.enabled = !nextMuted;
     });
   };
 
-  // Real camera ON/OFF toggle
-  const toggleCam = () => {
+  const toggleCam = async () => {
     if (!activeCall || activeCall.callType !== 'video') return;
     const nextCam = !camOn;
     setCamOn(nextCam);
+    await agoraService.setCameraEnabled(`call-${activeCall.callId}`, nextCam);
     localStreamRef.current?.getVideoTracks().forEach((t) => {
       t.enabled = nextCam;
     });
   };
 
-  // Real Front / Rear camera switch
   const switchCamera = async () => {
     if (!activeCall || activeCall.callType !== 'video') return;
     const nextFacing = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(nextFacing);
+    const switchedAgora = await agoraService.switchCamera(`call-${activeCall.callId}`);
+    if (switchedAgora) return;
+
     try {
       const nextStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: nextFacing },
@@ -240,7 +264,6 @@ export const CallOverlay: React.FC<CallOverlayProps> = ({
     }
   };
 
-  // Speaker output toggle
   const toggleSpeaker = () => {
     const next = !speakerOn;
     setSpeakerOn(next);

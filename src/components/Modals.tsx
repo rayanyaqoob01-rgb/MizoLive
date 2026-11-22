@@ -1,30 +1,40 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  Check,
   ChevronRight,
   Clapperboard,
   Gift,
   Home as HomeIcon,
   Info,
+  Lock,
   LogOut,
   Mic,
   MicOff,
   Minimize2,
   Play,
+  Plus,
   Radio,
   Send,
   Settings,
   Share2,
+  Shield,
+  Unlock,
   UserMinus,
   UserPlus,
   Users,
+  Video,
+  VideoOff,
   X,
 } from 'lucide-react';
 import { INITIAL_ACTIVE_USERS, SAMPLE_ROOM_PARTICIPANTS } from '../data/mizoData';
+import { agoraService, AgoraStatus } from '../services/agoraService';
 import {
   GiftHistoryRecord,
   GiftItem,
   RoomItem,
   RoomParticipant,
+  RoomSeatItem,
+  RoomSeatLayout,
   StoreItem,
   UserVideo,
 } from '../types/mizo';
@@ -151,7 +161,7 @@ export const CreateActionMenu: React.FC<CreateActionMenuProps> = ({
 };
 
 /* =========================================================
-   2. ROOM LOUNGE MODAL WITH HOST MANAGEMENT, SETTINGS, INVITES & GIFTING
+   2. ROOM LOUNGE MODAL WITH 4/6/9/12 SEATS, AGORA RTC, MODERATORS & HOST CONTROLS
    ========================================================= */
 interface RoomLoungeModalProps {
   room: RoomItem | null;
@@ -167,6 +177,68 @@ interface RoomLoungeModalProps {
   onSendGift: (gift: GiftItem, recipient: string) => Promise<boolean>;
   onOpenUserInfo: (user: UserInfoTarget) => void;
   onAddActivityXp: (amount: number) => void;
+}
+
+function buildInitialSeats(
+  capacity: RoomSeatLayout,
+  room: RoomItem,
+  username: string,
+  userAvatar: string,
+  userLevel: number,
+  isHost: boolean,
+  participants: RoomParticipant[]
+): RoomSeatItem[] {
+  const seats: RoomSeatItem[] = [];
+  for (let i = 0; i < capacity; i++) {
+    if (i === 0) {
+      seats.push({
+        seatIndex: 0,
+        occupantId: 'host',
+        occupantName: room.hostName,
+        occupantAvatar: room.hostAvatar,
+        occupantLevel: room.hostLevel,
+        isHostSeat: true,
+        isMuted: false,
+        isLocked: false,
+        hasVideo: true,
+      });
+    } else if (i === 1 && !isHost) {
+      seats.push({
+        seatIndex: 1,
+        occupantId: 'you',
+        occupantName: `${username} (You)`,
+        occupantAvatar: userAvatar,
+        occupantLevel: userLevel,
+        isMuted: true,
+        isLocked: false,
+        hasVideo: false,
+      });
+    } else {
+      const candidate = participants[i - (isHost ? 1 : 2)];
+      if (candidate && candidate.role !== 'Listener') {
+        seats.push({
+          seatIndex: i,
+          occupantId: candidate.id,
+          occupantName: candidate.name,
+          occupantAvatar: candidate.avatar,
+          occupantLevel: candidate.level,
+          isMuted: Boolean(candidate.isMuted),
+          isLocked: false,
+        });
+      } else {
+        seats.push({
+          seatIndex: i,
+          occupantId: null,
+          occupantName: null,
+          occupantAvatar: null,
+          occupantLevel: 1,
+          isMuted: false,
+          isLocked: false,
+        });
+      }
+    }
+  }
+  return seats;
 }
 
 export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
@@ -185,6 +257,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
   onAddActivityXp,
 }) => {
   const [muted, setMuted] = useState(true);
+  const [videoOn, setVideoOn] = useState(false);
   const [msgInput, setMsgInput] = useState('');
   const [messages, setMessages] = useState<
     Array<{ id: string; sender: string; level: number; text: string }>
@@ -198,11 +271,25 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
   ]);
 
   const [participants, setParticipants] = useState<RoomParticipant[]>(SAMPLE_ROOM_PARTICIPANTS);
+  const [seatLayout, setSeatLayout] = useState<RoomSeatLayout>(room?.seatCapacity || 6);
+  const [seats, setSeats] = useState<RoomSeatItem[]>([]);
+  const [selectedSeat, setSelectedSeat] = useState<RoomSeatItem | null>(null);
+  const [pendingSeatRequest, setPendingSeatRequest] = useState<{
+    name: string;
+    avatar: string;
+    level: number;
+    seatIndex: number;
+  } | null>(null);
+
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [giftPanelOpen, setGiftPanelOpen] = useState(false);
   const [giftRecipient, setGiftRecipient] = useState('');
   const [giftHistory, setGiftHistory] = useState<GiftHistoryRecord[]>([]);
   const [giftBanner, setGiftBanner] = useState<GiftHistoryRecord | null>(null);
+
+  // Agora Room RTC Connection State
+  const [agoraStatus, setAgoraStatus] = useState<AgoraStatus>('idle');
+  const [agoraDetail, setAgoraDetail] = useState<string>('Connecting room audio...');
 
   // Room Info, Settings, Invitations & Share
   const [roomInfoOpen, setRoomInfoOpen] = useState(false);
@@ -214,10 +301,53 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editType, setEditType] = useState<RoomItem['roomType']>('Public');
+  const [editSeats, setEditSeats] = useState<RoomSeatLayout>(6);
 
   // Role-gated exit dialogs
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [endPartyDialogOpen, setEndPartyDialogOpen] = useState(false);
+
+  // Initialize Seats when Room or Layout changes
+  useEffect(() => {
+    if (!room) return;
+    const cap = room.seatCapacity || 6;
+    setSeatLayout(cap);
+    setSeats(
+      buildInitialSeats(
+        cap,
+        room,
+        username,
+        userAvatar,
+        userLevel,
+        Boolean(room.isUserHost),
+        participants
+      )
+    );
+  }, [room?.id, room?.seatCapacity]);
+
+  // Connect / Cleanup Agora Room Session
+  useEffect(() => {
+    if (!room) return;
+    const sessionId = `room-${room.id}`;
+    agoraService.startSession({
+      sessionId,
+      kind: 'room',
+      channelName: `mizo_room_${room.id}`,
+      role: room.isUserHost || !muted ? 'host' : 'audience',
+      enableAudio: !muted,
+      enableVideo: videoOn,
+      events: {
+        onStatusChange: (status, detail) => {
+          setAgoraStatus(status);
+          setAgoraDetail(detail);
+        },
+      },
+    });
+
+    return () => {
+      agoraService.leaveSession(sessionId);
+    };
+  }, [room?.id]);
 
   if (!room || minimized) return null;
 
@@ -239,9 +369,102 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
       level: userLevel,
       role: isHost ? 'Host' : 'Speaker',
       isMuted: muted,
+      canSpeak: true,
+      canVideo: videoOn,
     },
     ...participants,
   ];
+
+  const handleToggleMic = async () => {
+    const nextMuted = !muted;
+    setMuted(nextMuted);
+    await agoraService.setMicEnabled(`room-${room.id}`, !nextMuted);
+    setSeats((prev) =>
+      prev.map((s) => (s.occupantId === 'you' || (isHost && s.isHostSeat) ? { ...s, isMuted: nextMuted } : s))
+    );
+  };
+
+  const handleToggleVideo = async () => {
+    const nextVideo = !videoOn;
+    setVideoOn(nextVideo);
+    await agoraService.setCameraEnabled(`room-${room.id}`, nextVideo);
+    setSeats((prev) =>
+      prev.map((s) => (s.occupantId === 'you' || (isHost && s.isHostSeat) ? { ...s, hasVideo: nextVideo } : s))
+    );
+  };
+
+  const handleSeatAction = (action: 'take' | 'leave' | 'mute' | 'remove' | 'lock' | 'invite') => {
+    if (!selectedSeat) return;
+    const idx = selectedSeat.seatIndex;
+    if (action === 'take') {
+      setSeats((prev) =>
+        prev.map((s) =>
+          s.seatIndex === idx
+            ? {
+                ...s,
+                occupantId: 'you',
+                occupantName: `${username} (You)`,
+                occupantAvatar: userAvatar,
+                occupantLevel: userLevel,
+                isMuted: muted,
+              }
+            : s
+        )
+      );
+    } else if (action === 'leave' || action === 'remove') {
+      setSeats((prev) =>
+        prev.map((s) =>
+          s.seatIndex === idx
+            ? {
+                ...s,
+                occupantId: null,
+                occupantName: null,
+                occupantAvatar: null,
+                isMuted: false,
+              }
+            : s
+        )
+      );
+    } else if (action === 'mute') {
+      setSeats((prev) =>
+        prev.map((s) => (s.seatIndex === idx ? { ...s, isMuted: !s.isMuted } : s))
+      );
+    } else if (action === 'lock') {
+      setSeats((prev) =>
+        prev.map((s) => (s.seatIndex === idx ? { ...s, isLocked: !s.isLocked } : s))
+      );
+    } else if (action === 'invite') {
+      const guest = INITIAL_ACTIVE_USERS[idx % INITIAL_ACTIVE_USERS.length];
+      setPendingSeatRequest({
+        name: guest.name,
+        avatar: guest.avatar,
+        level: guest.level,
+        seatIndex: idx,
+      });
+    }
+    setSelectedSeat(null);
+  };
+
+  const handleAcceptSeatInvite = (accepted: boolean) => {
+    if (!pendingSeatRequest) return;
+    if (accepted) {
+      setSeats((prev) =>
+        prev.map((s) =>
+          s.seatIndex === pendingSeatRequest.seatIndex
+            ? {
+                ...s,
+                occupantId: `guest-${pendingSeatRequest.seatIndex}`,
+                occupantName: pendingSeatRequest.name,
+                occupantAvatar: pendingSeatRequest.avatar,
+                occupantLevel: pendingSeatRequest.level,
+                isMuted: false,
+              }
+            : s
+        )
+      );
+    }
+    setPendingSeatRequest(null);
+  };
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -287,16 +510,30 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
     setEditName(room.name);
     setEditDesc(room.description);
     setEditType(room.roomType);
+    setEditSeats(seatLayout);
     setSettingsOpen(true);
   };
 
   const handleSaveRoomSettings = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editName.trim()) return;
+    setSeatLayout(editSeats);
+    setSeats(
+      buildInitialSeats(
+        editSeats,
+        room,
+        username,
+        userAvatar,
+        userLevel,
+        isHost,
+        participants
+      )
+    );
     onUpdateRoom(room.id, {
       name: editName.trim(),
       description: editDesc.trim() || room.description,
       roomType: editType,
+      seatCapacity: editSeats,
     });
     setSettingsOpen(false);
   };
@@ -307,9 +544,28 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
     );
   };
 
+  const toggleModeratorRole = (id: string) => {
+    setParticipants((prev) =>
+      prev.map((p) =>
+        p.id === id
+          ? { ...p, role: p.role === 'Moderator' ? 'Speaker' : 'Moderator' }
+          : p
+      )
+    );
+  };
+
   const removeParticipant = (id: string) => {
     setParticipants((prev) => prev.filter((p) => p.id !== id));
+    setSeats((prev) =>
+      prev.map((s) =>
+        s.occupantId === id
+          ? { ...s, occupantId: null, occupantName: null, occupantAvatar: null }
+          : s
+      )
+    );
   };
+
+  const seatGridColsClass = seatLayout === 4 ? 'grid-cols-4' : seatLayout === 6 ? 'grid-cols-3' : 'grid-cols-4';
 
   return (
     <div
@@ -318,17 +574,17 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
       aria-modal="true"
       aria-label={`${room.name} lounge`}
     >
-      <div className="relative w-full h-full sm:h-[88vh] sm:max-w-md sm:rounded-3xl overflow-hidden bg-[#0D061B] border border-purple-500/35 flex flex-col">
+      <div className="relative w-full h-full sm:h-[90vh] sm:max-w-md sm:rounded-3xl overflow-hidden bg-[#0D061B] border border-purple-500/35 flex flex-col">
         {/* Room Cover Header */}
-        <div className="relative h-40 shrink-0">
+        <div className="relative h-36 shrink-0">
           <SafeImage src={room.coverImage} alt={room.name} className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/75 via-black/35 to-[#0D061B]" />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/40 to-[#0D061B]" />
           <div className="absolute top-3 inset-x-3.5 flex items-start justify-between pt-safe gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <h2 className="text-lg font-display font-bold text-white truncate">{room.name}</h2>
+                <h2 className="text-base font-display font-bold text-white truncate">{room.name}</h2>
                 <span className="px-2 py-0.5 rounded-full bg-purple-700/80 border border-purple-300/35 text-[10px] font-bold text-white shrink-0">
-                  {room.roomType}
+                  {room.roomType} · {seatLayout} Seats
                 </span>
                 {isHost && (
                   <span className="px-2 py-0.5 rounded-full mizo-gold-gradient text-[#1E0B3B] text-[10px] font-extrabold shrink-0">
@@ -341,16 +597,19 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                 onClick={() => setParticipantsOpen(true)}
                 className="text-xs text-amber-300 font-mono-num inline-flex items-center gap-1 hover:underline mt-0.5"
               >
-                <Users className="w-3.5 h-3.5" /> {room.participantDisplay} participants · Manage
+                <Users className="w-3.5 h-3.5" /> {room.participantDisplay} · Manage Seats &amp; Mods
               </button>
+              <p className="text-[10px] text-purple-200/90 mt-0.5 truncate" title={agoraDetail}>
+                Agora RTC: {agoraStatus === 'connected' ? 'Connected' : agoraStatus === 'credentials_required' ? 'Server Agora Keys Needed' : agoraStatus}
+              </p>
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
                 onClick={() => setInviteOpen(true)}
                 aria-label="Invite users to room"
-                className="w-9 h-9 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-amber-300 hover:border-amber-400"
+                className="w-8 h-8 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-amber-300 hover:border-amber-400"
               >
                 <UserPlus className="w-4 h-4" />
               </button>
@@ -361,7 +620,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                   setTimeout(() => setShareToast(false), 1800);
                 }}
                 aria-label="Share room"
-                className="w-9 h-9 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-white hover:border-amber-400"
+                className="w-8 h-8 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-white hover:border-amber-400"
               >
                 <Share2 className="w-4 h-4" />
               </button>
@@ -369,7 +628,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                 type="button"
                 onClick={() => setRoomInfoOpen(true)}
                 aria-label="Room info"
-                className="w-9 h-9 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-white hover:border-amber-400"
+                className="w-8 h-8 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-white hover:border-amber-400"
               >
                 <Info className="w-4 h-4" />
               </button>
@@ -378,7 +637,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                   type="button"
                   onClick={openRoomSettings}
                   aria-label="Room settings"
-                  className="w-9 h-9 rounded-xl bg-black/55 border border-amber-400/40 flex items-center justify-center text-amber-300"
+                  className="w-8 h-8 rounded-xl bg-black/55 border border-amber-400/40 flex items-center justify-center text-amber-300"
                 >
                   <Settings className="w-4 h-4" />
                 </button>
@@ -387,7 +646,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                 type="button"
                 onClick={handleExitPress}
                 aria-label={isHost ? 'End This Party' : 'Leave or Minimize Room'}
-                className="w-9 h-9 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-white hover:bg-rose-600/80"
+                className="w-8 h-8 rounded-xl bg-black/55 border border-white/15 flex items-center justify-center text-white hover:bg-rose-600/80"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -395,9 +654,70 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
           </div>
         </div>
 
+        {/* Host Layout Switcher Bar */}
+        {isHost && (
+          <div className="px-3 pb-2 flex items-center justify-between gap-2 text-[10px]">
+            <span className="text-slate-400 font-semibold">Seat Layout:</span>
+            <div className="flex items-center gap-1">
+              {([4, 6, 9, 12] as const).map((cap) => (
+                <button
+                  key={cap}
+                  type="button"
+                  onClick={() => {
+                    setSeatLayout(cap);
+                    setSeats(
+                      buildInitialSeats(
+                        cap,
+                        room,
+                        username,
+                        userAvatar,
+                        userLevel,
+                        isHost,
+                        participants
+                      )
+                    );
+                    onUpdateRoom(room.id, { seatCapacity: cap });
+                  }}
+                  className={`px-2 py-0.5 rounded-lg font-bold ${
+                    seatLayout === cap
+                      ? 'mizo-gold-gradient text-[#1E0B3B]'
+                      : 'bg-white/10 text-slate-300'
+                  }`}
+                >
+                  {cap}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {shareToast && (
           <div className="mx-3 mb-2 rounded-xl bg-purple-900/90 border border-amber-400/50 px-3 py-1.5 text-center text-xs font-semibold text-amber-200">
             Room invite link copied!
+          </div>
+        )}
+
+        {pendingSeatRequest && (
+          <div className="mx-3 mb-2 rounded-xl bg-[#1A0D36] border border-amber-400/60 px-3 py-2 flex items-center justify-between gap-2 text-xs">
+            <span className="text-white truncate">
+              Invite <b className="text-amber-300">{pendingSeatRequest.name}</b> to Seat #{pendingSeatRequest.seatIndex + 1}?
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleAcceptSeatInvite(false)}
+                className="px-2 py-1 rounded-lg bg-white/10 text-slate-200 font-bold"
+              >
+                Decline
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAcceptSeatInvite(true)}
+                className="px-2 py-1 rounded-lg mizo-gold-gradient text-[#1E0B3B] font-extrabold inline-flex items-center gap-0.5"
+              >
+                <Check className="w-3 h-3" /> Accept
+              </button>
+            </div>
           </div>
         )}
 
@@ -416,65 +736,54 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
           </div>
         )}
 
-        {/* Audio Seats Grid */}
-        <div className="px-4 py-3 grid grid-cols-4 gap-3 border-b border-purple-500/20">
-          <button
-            type="button"
-            onClick={() =>
-              onOpenUserInfo({
-                name: room.hostName,
-                avatar: room.hostAvatar,
-                level: room.hostLevel,
-              })
-            }
-            className="flex flex-col items-center gap-1"
-          >
-            <div className="w-13 h-13 rounded-full p-0.5 mizo-gold-gradient">
-              <SafeImage src={room.hostAvatar} alt={room.hostName} className="w-full h-full rounded-full object-cover" />
-            </div>
-            <span className="text-[11px] font-semibold text-amber-300 truncate max-w-full">
-              {room.hostName}
-            </span>
-            <LevelBadge level={room.hostLevel} size="xs" />
-          </button>
-
-          <div className="flex flex-col items-center gap-1">
-            <div className="w-13 h-13 rounded-full p-0.5 bg-purple-500">
-              <SafeImage src={userAvatar} alt={username} className="w-full h-full rounded-full object-cover" />
-            </div>
-            <span className="text-[11px] font-medium text-white truncate max-w-full">You</span>
-            <LevelBadge level={userLevel} size="xs" />
-          </div>
-
-          {participants.slice(0, 2).map((speaker) => (
+        {/* Interactive 4 / 6 / 9 / 12 Audio/Video Seats Grid */}
+        <div
+          className={`px-3 py-2.5 grid ${seatGridColsClass} gap-2.5 border-b border-purple-500/20 max-h-56 overflow-y-auto`}
+        >
+          {seats.map((seat) => (
             <button
-              key={speaker.id}
+              key={seat.seatIndex}
               type="button"
-              onClick={() =>
-                onOpenUserInfo({
-                  name: speaker.name,
-                  avatar: speaker.avatar,
-                  level: speaker.level,
-                })
-              }
-              className="flex flex-col items-center gap-1"
+              onClick={() => setSelectedSeat(seat)}
+              className="flex flex-col items-center gap-1 group"
             >
-              <div className="relative w-13 h-13 rounded-full bg-purple-900/40 border border-purple-400/50 p-0.5">
-                <SafeImage src={speaker.avatar} alt={speaker.name} className="w-full h-full rounded-full object-cover" />
-                {speaker.isMuted && (
-                  <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-rose-600 flex items-center justify-center">
-                    <MicOff className="w-2.5 h-2.5 text-white" />
-                  </span>
-                )}
-              </div>
-              <span className="text-[11px] text-slate-200 truncate max-w-full">{speaker.name}</span>
-              <LevelBadge level={speaker.level} size="xs" />
+              {seat.occupantName && seat.occupantAvatar ? (
+                <div
+                  className={`relative w-12 h-12 rounded-full p-0.5 ${
+                    seat.isHostSeat
+                      ? 'mizo-gold-gradient'
+                      : 'bg-purple-500/70 border border-purple-300/40'
+                  }`}
+                >
+                  <SafeImage
+                    src={seat.occupantAvatar}
+                    alt={seat.occupantName}
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                  {seat.isMuted && (
+                    <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-rose-600 flex items-center justify-center">
+                      <MicOff className="w-2.5 h-2.5 text-white" />
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="w-12 h-12 rounded-full bg-[#170D2E] border border-dashed border-purple-400/40 group-hover:border-amber-400 flex items-center justify-center text-purple-300">
+                  {seat.isLocked ? (
+                    <Lock className="w-4 h-4 text-rose-400" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                </div>
+              )}
+              <span className="text-[10px] text-slate-200 truncate max-w-full">
+                {seat.occupantName || (seat.isLocked ? 'Locked' : `Seat ${seat.seatIndex + 1}`)}
+              </span>
             </button>
           ))}
         </div>
 
         {/* Room Chat with Level Badges */}
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
+        <div className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-2">
           <p className="text-xs text-slate-400 mb-1">{room.description}</p>
           {messages.map((m) => (
             <div
@@ -488,13 +797,13 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
           ))}
         </div>
 
-        {/* Footer Controls */}
-        <div className="p-3 pb-safe border-t border-purple-500/20 flex items-center gap-2 bg-[#0A0515]">
+        {/* Footer Controls: Mic, Video, Chat, Gift */}
+        <div className="p-3 pb-safe border-t border-purple-500/20 flex items-center gap-1.5 bg-[#0A0515]">
           <button
             type="button"
-            onClick={() => setMuted((m) => !m)}
+            onClick={handleToggleMic}
             aria-label={muted ? 'Unmute mic' : 'Mute mic'}
-            className={`w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-colors ${
+            className={`w-9 h-9 rounded-full flex items-center justify-center border shrink-0 transition-colors ${
               muted
                 ? 'bg-white/5 border-white/15 text-slate-300'
                 : 'bg-purple-600 border-amber-400 text-white'
@@ -503,40 +812,137 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
             {muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
 
+          <button
+            type="button"
+            onClick={handleToggleVideo}
+            aria-label={videoOn ? 'Turn seat video off' : 'Turn seat video on'}
+            className={`w-9 h-9 rounded-full flex items-center justify-center border shrink-0 transition-colors ${
+              videoOn
+                ? 'bg-purple-600 border-amber-400 text-white'
+                : 'bg-white/5 border-white/15 text-slate-300'
+            }`}
+          >
+            {videoOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+          </button>
+
           <form onSubmit={handleSend} className="flex-1 flex items-center gap-1.5">
             <input
               type="text"
               value={msgInput}
               onChange={(e) => setMsgInput(e.target.value)}
               placeholder="Send room message..."
-              className="flex-1 h-10 px-3.5 rounded-full bg-[#150C29] border border-purple-500/30 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-400"
+              className="flex-1 h-9 px-3 rounded-full bg-[#150C29] border border-purple-500/30 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-400"
             />
             <button
               type="submit"
               aria-label="Send room message"
-              className="w-10 h-10 rounded-full mizo-purple-gradient text-white flex items-center justify-center shrink-0"
+              className="w-9 h-9 rounded-full mizo-purple-gradient text-white flex items-center justify-center shrink-0"
             >
               <Send className="w-4 h-4" />
             </button>
           </form>
 
-          {/* Compact Room Gift Box Button */}
           <button
             type="button"
             onClick={() => setGiftPanelOpen(true)}
             aria-label="Send Room Gift"
-            className="w-10 h-10 rounded-full mizo-gold-gradient text-[#1E0B3B] flex items-center justify-center shrink-0 shadow-md"
+            className="w-9 h-9 rounded-full mizo-gold-gradient text-[#1E0B3B] flex items-center justify-center shrink-0 shadow-md"
           >
             <Gift className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Participant List & Host Participant Management Drawer */}
+        {/* Seat Management Sheet */}
+        {selectedSeat && (
+          <div className="absolute inset-0 z-40 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+            <div className="w-full max-w-xs rounded-3xl mizo-royal-card border border-amber-400/50 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-display font-bold text-white">
+                  Seat #{selectedSeat.seatIndex + 1}{' '}
+                  {selectedSeat.occupantName ? `· ${selectedSeat.occupantName}` : '(Empty)'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeat(null)}
+                  className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-slate-300"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+                {!selectedSeat.occupantName && !selectedSeat.isLocked && (
+                  <button
+                    type="button"
+                    onClick={() => handleSeatAction('take')}
+                    className="min-h-[38px] rounded-xl mizo-gold-gradient text-[#1E0B3B]"
+                  >
+                    Take Seat
+                  </button>
+                )}
+                {isHost && !selectedSeat.occupantName && (
+                  <button
+                    type="button"
+                    onClick={() => handleSeatAction('invite')}
+                    className="min-h-[38px] rounded-xl mizo-purple-gradient text-white"
+                  >
+                    Invite to Seat
+                  </button>
+                )}
+                {isHost && selectedSeat.occupantName && !selectedSeat.isHostSeat && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleSeatAction('mute')}
+                      className="min-h-[38px] rounded-xl bg-white/10 text-amber-300"
+                    >
+                      {selectedSeat.isMuted ? 'Unmute Seat' : 'Mute Seat'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSeatAction('remove')}
+                      className="min-h-[38px] rounded-xl bg-rose-600/80 text-white"
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
+                {selectedSeat.occupantId === 'you' && (
+                  <button
+                    type="button"
+                    onClick={() => handleSeatAction('leave')}
+                    className="min-h-[38px] rounded-xl bg-rose-600/80 text-white"
+                  >
+                    Step Down
+                  </button>
+                )}
+                {isHost && !selectedSeat.isHostSeat && (
+                  <button
+                    type="button"
+                    onClick={() => handleSeatAction('lock')}
+                    className="min-h-[38px] rounded-xl bg-[#160B2C] border border-purple-500/35 text-slate-200 inline-flex items-center justify-center gap-1"
+                  >
+                    {selectedSeat.isLocked ? (
+                      <>
+                        <Unlock className="w-3.5 h-3.5" /> Unlock
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-3.5 h-3.5" /> Lock Seat
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Participant List, Moderators & Host Permission Management Drawer */}
         {participantsOpen && (
           <div className="absolute inset-x-0 bottom-0 z-30 h-[66%] rounded-t-3xl bg-[#0D061B]/95 backdrop-blur-2xl border-t border-purple-500/40 flex flex-col">
             <div className="px-4 py-3 border-b border-purple-500/20 flex items-center justify-between">
               <span className="text-sm font-display font-bold text-white">
-                Participants ({fullParticipantsList.length})
+                Participants &amp; Moderators ({fullParticipantsList.length})
               </span>
               <button
                 type="button"
@@ -580,7 +986,19 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                     </button>
 
                     {isManageable && (
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleModeratorRole(p.id)}
+                          aria-label={`Toggle moderator for ${p.name}`}
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            p.role === 'Moderator'
+                              ? 'bg-amber-400/25 text-amber-300'
+                              : 'bg-white/10 text-slate-300'
+                          }`}
+                        >
+                          <Shield className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => toggleParticipantMute(p.id)}
@@ -623,7 +1041,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
               <p className="text-white font-bold">{room.name}</p>
               <p className="text-slate-300">{room.description}</p>
               <p className="text-amber-300">
-                Type: {room.roomType} · Host: {room.hostName}
+                Type: {room.roomType} · Seats: {seatLayout} · Host: {room.hostName}
               </p>
             </div>
           </div>
@@ -684,6 +1102,26 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                       }`}
                     >
                       {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Seats Layout</label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {([4, 6, 9, 12] as const).map((cap) => (
+                    <button
+                      key={cap}
+                      type="button"
+                      onClick={() => setEditSeats(cap)}
+                      className={`py-1.5 rounded-lg text-[11px] font-bold ${
+                        editSeats === cap
+                          ? 'mizo-purple-gradient text-white border border-amber-400/50'
+                          : 'bg-[#150C28] text-slate-300 border border-purple-500/25'
+                      }`}
+                    >
+                      {cap}
                     </button>
                   ))}
                 </div>
@@ -807,6 +1245,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                   type="button"
                   onClick={() => {
                     setLeaveDialogOpen(false);
+                    agoraService.leaveSession(`room-${room.id}`);
                     onLeaveRoom();
                   }}
                   className="w-full min-h-[44px] rounded-xl bg-rose-600/90 hover:bg-rose-500 text-xs font-bold text-white inline-flex items-center justify-center gap-2"
@@ -846,6 +1285,7 @@ export const RoomLoungeModal: React.FC<RoomLoungeModalProps> = ({
                   type="button"
                   onClick={() => {
                     setEndPartyDialogOpen(false);
+                    agoraService.leaveSession(`room-${room.id}`);
                     onEndParty(room.id);
                   }}
                   className="min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white"
@@ -905,7 +1345,7 @@ export const StorePreviewModal: React.FC<StorePreviewModalProps> = ({
         <p className="text-xs text-slate-300 mt-1">{item.subtitle}</p>
 
         <div className="my-6 py-6 rounded-2xl bg-gradient-to-b from-[#231048] to-[#0B0517] border border-purple-400/25 flex flex-col items-center justify-center gap-3">
-          {item.category === 'VIP Frames' ? (
+          {item.category === 'VIP Frames' || item.category === 'Animated Frames' ? (
             <div className="relative w-24 h-24 flex items-center justify-center animate-mizo-float">
               <SafeImage
                 src={userAvatar}
@@ -947,7 +1387,7 @@ export const StorePreviewModal: React.FC<StorePreviewModalProps> = ({
             }}
             className="min-h-[44px] rounded-xl mizo-gold-gradient text-[#1E0B3B] text-sm font-bold shadow-lg"
           >
-            {item.owned ? 'Select' : 'Purchase'}
+            {item.owned ? 'Equip / Use' : 'Purchase'}
           </button>
         </div>
       </div>

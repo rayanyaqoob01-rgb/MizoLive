@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { User } from 'firebase/auth';
 import { BottomNav } from './components/BottomNav';
 import { ActiveCallSessionUI, CallOverlay } from './components/CallOverlay';
 import { MinimizedLivePlayer } from './components/MinimizedLivePlayer';
@@ -24,6 +25,15 @@ import {
   INITIAL_ROOMS,
   INITIAL_STORE_ITEMS,
 } from './data/mizoData';
+import { AccountSettingsScreen } from './screens/AccountSettingsScreen';
+import { AdminDiagnosticsScreen } from './screens/AdminDiagnosticsScreen';
+import {
+  AuthFlowScreen,
+  AuthScreenMode,
+  EmailVerificationBanner,
+  GuestRestrictionModal,
+  SplashScreen,
+} from './screens/AuthScreens';
 import { CreateRoomScreen } from './screens/CreateRoomScreen';
 import { EditProfileScreen } from './screens/EditProfileScreen';
 import { GoLiveScreen } from './screens/GoLiveScreen';
@@ -42,10 +52,32 @@ import { StoreScreen } from './screens/StoreScreen';
 import { UploadVideoScreen } from './screens/UploadVideoScreen';
 import { VideoFeedScreen } from './screens/VideoFeedScreen';
 import { WalletScreen } from './screens/WalletScreen';
+import { apiClient } from './services/apiClient';
+import {
+  auth,
+  changeAccountPassword,
+  deleteCurrentFirebaseAccount,
+  initializeExtendedFirebaseServices,
+  isVerifiedAdminUser,
+  linkGuestWithGoogle,
+  requestFcmPushToken,
+  resendVerificationEmail,
+  sendPasswordReset,
+  signInAsGuest,
+  signInWithEmail,
+  signInWithFacebook,
+  signInWithGoogle,
+  signOutFirebase,
+  signUpWithEmail,
+  submitReportToFirestore,
+  subscribeAuth,
+  syncUserProfileToFirestore,
+} from './services/firebase';
 import {
   AchievementBadge,
   ActiveUserItem,
   AppScreen,
+  BlockedUserItem,
   CallRecord,
   EconomyConfig,
   FeedVideo,
@@ -56,6 +88,8 @@ import {
   LiveStream,
   MainTab,
   NotificationPrefs,
+  ProfileThemeId,
+  ReportHistoryItem,
   RoomItem,
   ServerWalletAccount,
   StoreItem,
@@ -87,6 +121,14 @@ export default function App() {
   const [inboxInitialTab, setInboxInitialTab] = useState<InboxTab>('All');
   const [videoFeedIndex, setVideoFeedIndex] = useState(0);
 
+  // Boot Splash & Firebase Authentication State
+  const [splashVisible, setSplashVisible] = useState(true);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<AuthScreenMode>('welcome');
+  const [guestPromptAction, setGuestPromptAction] = useState<string | null>(null);
+
   // Core App State
   const [profile, setProfile] = useState<UserProfile>(INITIAL_PROFILE);
   const [economy, setEconomy] = useState<EconomyConfig>(FALLBACK_ECONOMY);
@@ -104,6 +146,9 @@ export default function App() {
   const [myVideos, setMyVideos] = useState<UserVideo[]>(INITIAL_MY_VIDEOS);
   const [achievements, setAchievements] =
     useState<AchievementBadge[]>(INITIAL_ACHIEVEMENTS);
+  const [blockedUsers, setBlockedUsers] = useState<BlockedUserItem[]>([]);
+  const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
+  const [language, setLanguage] = useState('English');
 
   // Overlays & Live / Room / Call States
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -138,12 +183,21 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const activeCallRef = useRef<ActiveCallSessionUI | null>(null);
+  activeCallRef.current = activeCall;
+
+  const isGuest = !authUser || authUser.isAnonymous;
+  const isAdmin = isVerifiedAdminUser(authUser);
+  const linkedProviders = useMemo(
+    () => authUser?.providerData?.map((p) => p.providerId) || [],
+    [authUser]
+  );
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage((curr) => (curr === msg ? null : curr));
-    }, 2800);
+    }, 3000);
   };
 
   const syncAccountFromServer = (acc: ServerWalletAccount) => {
@@ -161,24 +215,73 @@ export default function App() {
     );
   };
 
+  // Boot Splash Timer
+  useEffect(() => {
+    const t = setTimeout(() => setSplashVisible(false), 500);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Firebase Auth Subscription & Header Injection
+  useEffect(() => {
+    const unsub = subscribeAuth((user) => {
+      setAuthUser(user);
+      setAuthReady(true);
+
+      apiClient.setAuthHeadersProvider(() => ({
+        'x-mizo-user-id': user?.uid || profile.userId,
+        ...(user?.email ? { 'x-mizo-admin-email': user.email } : {}),
+        'x-mizo-email-verified': String(Boolean(user?.emailVerified)),
+      }));
+
+      if (user && !user.isAnonymous) {
+        setAuthModalOpen(false);
+        const nextUsername =
+          user.displayName?.trim() ||
+          (user.email ? user.email.split('@')[0] : '') ||
+          profile.username;
+        setProfile((prev) => ({
+          ...prev,
+          username: prev.username === INITIAL_PROFILE.username ? nextUsername : prev.username,
+          avatar:
+            user.photoURL && prev.avatar === INITIAL_PROFILE.avatar
+              ? user.photoURL
+              : prev.avatar,
+        }));
+      }
+    });
+
+    initializeExtendedFirebaseServices().catch(() => {});
+
+    return () => unsub();
+  }, []);
+
+  // Open Welcome/Auth Screen on fresh unauthenticated load once splash ends
+  useEffect(() => {
+    if (authReady && !splashVisible && !authUser) {
+      setAuthModalMode('welcome');
+      setAuthModalOpen(true);
+    }
+  }, [authReady, splashVisible, authUser]);
+
   // Load configurable server economy & wallet on mount + connect WebSocket signaling
   useEffect(() => {
-    fetch('/api/config')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.economy) setEconomy(data.economy);
-      })
-      .catch(() => {});
+    apiClient.get<{ economy: EconomyConfig }>('/api/config').then((res) => {
+      if (res.ok && res.data?.economy) {
+        setEconomy(res.data.economy);
+      }
+    });
 
-    fetch(`/api/wallet?userId=${encodeURIComponent(profile.userId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((acc) => {
-        if (acc && typeof acc.coins === 'number') {
-          syncAccountFromServer(acc);
+    const walletUserId = authUser?.uid || profile.userId;
+    apiClient
+      .get<ServerWalletAccount>(`/api/wallet?userId=${encodeURIComponent(walletUserId)}`)
+      .then((res) => {
+        if (res.ok && res.data && typeof res.data.coins === 'number') {
+          syncAccountFromServer(res.data);
         }
-      })
-      .catch(() => {});
+      });
+  }, [authUser?.uid]);
 
+  useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
     wsRef.current = ws;
@@ -194,7 +297,10 @@ export default function App() {
             peerLevel: msg.callerLevel || 24,
             callType: msg.callType === 'video' ? 'video' : 'audio',
           });
-        } else if (msg.type === 'call:end' && activeCall?.callId === msg.callId) {
+        } else if (
+          msg.type === 'call:end' &&
+          activeCallRef.current?.callId === msg.callId
+        ) {
           setActiveCall(null);
           showToast('Call ended by remote peer');
         }
@@ -207,7 +313,86 @@ export default function App() {
       ws.close();
       wsRef.current = null;
     };
-  }, []);
+  }, [profile.userId]);
+
+  const requireAuthenticatedAction = (actionLabel: string): boolean => {
+    if (!isGuest) return true;
+    setGuestPromptAction(actionLabel);
+    return false;
+  };
+
+  // Auth Flow Handlers
+  const handleGoogleLogin = async () => {
+    try {
+      await signInWithGoogle();
+      setAuthModalOpen(false);
+      showToast('Signed in with Google');
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Google sign-in cancelled or failed.' };
+    }
+  };
+
+  const handleFacebookLogin = async () => {
+    try {
+      await signInWithFacebook();
+      setAuthModalOpen(false);
+      showToast('Signed in with Facebook');
+      return { ok: true };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error:
+          err?.message ||
+          'Facebook sign-in failed. Ensure Facebook provider is enabled in Firebase Console.',
+      };
+    }
+  };
+
+  const handleEmailLogin = async (email: string, password: string) => {
+    try {
+      await signInWithEmail(email, password);
+      setAuthModalOpen(false);
+      showToast('Welcome back to Mizo Live');
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Invalid email or password.' };
+    }
+  };
+
+  const handleEmailSignup = async (email: string, password: string, username: string) => {
+    try {
+      await signUpWithEmail(email, password, username);
+      if (username.trim()) {
+        setProfile((prev) => ({ ...prev, username: username.trim() }));
+      }
+      setAuthModalOpen(false);
+      showToast('Account created — check inbox to verify email');
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Could not create account.' };
+    }
+  };
+
+  const handleForgotPassword = async (email: string) => {
+    try {
+      await sendPasswordReset(email);
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Failed to send reset link.' };
+    }
+  };
+
+  const handleGuestExplore = async () => {
+    try {
+      await signInAsGuest();
+    } catch {
+      // Allow local guest browsing even if Anonymous Auth is disabled in Firebase Console
+    }
+    setAuthModalOpen(false);
+    showToast('Exploring Mizo Live as Guest');
+    return { ok: true };
+  };
 
   // Configurable 99-Level XP progression helper (strictly 1-99)
   const addActivityXp = (amount: number, sourceLabel?: string) => {
@@ -248,23 +433,33 @@ export default function App() {
     [inboxItems, totalUnreadInbox]
   );
 
+  const mapFeedToUserVideo = (v: FeedVideo, label: string): UserVideo => ({
+    id: v.id,
+    title: v.description,
+    description: v.description,
+    privacy: 'Public',
+    thumbnail: v.thumbnail,
+    videoUrl: v.videoUrl,
+    duration: '0:35',
+    views: `${(v.likes + 450).toLocaleString()}`,
+    likes: `${v.likes.toLocaleString()}`,
+    creatorName: v.creatorName,
+    createdAt: label,
+  });
+
   const savedVideos = useMemo<UserVideo[]>(
+    () => feedVideos.filter((v) => v.isSaved).map((v) => mapFeedToUserVideo(v, 'Saved')),
+    [feedVideos]
+  );
+
+  const likedVideos = useMemo<UserVideo[]>(
+    () => feedVideos.filter((v) => v.isLiked).map((v) => mapFeedToUserVideo(v, 'Liked')),
+    [feedVideos]
+  );
+
+  const repostedVideos = useMemo<UserVideo[]>(
     () =>
-      feedVideos
-        .filter((v) => v.isSaved)
-        .map((v) => ({
-          id: v.id,
-          title: v.description,
-          description: v.description,
-          privacy: 'Public',
-          thumbnail: v.thumbnail,
-          videoUrl: v.videoUrl,
-          duration: '0:35',
-          views: `${(v.likes + 450).toLocaleString()}`,
-          likes: `${v.likes.toLocaleString()}`,
-          creatorName: v.creatorName,
-          createdAt: 'Saved',
-        })),
+      feedVideos.filter((v) => v.isReposted).map((v) => mapFeedToUserVideo(v, 'Reposted')),
     [feedVideos]
   );
 
@@ -340,108 +535,143 @@ export default function App() {
 
   // Wallet Recharge Handler
   const handleRechargePackage = async (packageId: string) => {
-    try {
-      const res = await fetch('/api/wallet/recharge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: profile.userId, packageId }),
-      });
-      const data = await res.json();
-      if (res.ok && data.account) {
-        syncAccountFromServer(data.account);
-        showToast(`+${data.added.toLocaleString()} Sandbox Coins added`);
-      } else {
-        showToast(data.error || 'Recharge failed');
-      }
-    } catch {
-      showToast('Server unavailable for recharge');
+    if (!requireAuthenticatedAction('recharge coins')) return;
+    const res = await apiClient.post<{ account?: ServerWalletAccount; added?: number }>(
+      '/api/wallet/recharge',
+      { userId: authUser?.uid || profile.userId, packageId }
+    );
+    if (res.ok && res.data?.account) {
+      syncAccountFromServer(res.data.account);
+      showToast(`+${(res.data.added || 0).toLocaleString()} Sandbox Coins added`);
+    } else {
+      showToast(res.error || 'Recharge failed');
     }
+  };
+
+  // Store Equip / Unequip Toggle (All 8 Categories)
+  const applyStoreItemEquipState = (item: StoreItem, forceEquip?: boolean) => {
+    const isFrameCat =
+      item.category === 'VIP Frames' || item.category === 'Animated Frames';
+    const isAssetCat =
+      item.category === 'Premium Assets' || item.category === 'Profile Decorations';
+
+    const currentlyEquipped =
+      (isFrameCat && profile.equippedFrameId === item.id) ||
+      (item.category === 'Special Entry' && profile.equippedEntryId === item.id) ||
+      (isAssetCat && profile.equippedAssetId === item.id) ||
+      (item.category === 'Name Decorations' && profile.equippedNameDecorId === item.id) ||
+      (item.category === 'Special Badges' && profile.equippedSpecialBadgeId === item.id);
+
+    const nextEquipped = forceEquip !== undefined ? forceEquip : !currentlyEquipped;
+
+    setStoreItems((prev) =>
+      prev.map((s) => {
+        if (s.id === item.id) {
+          return { ...s, owned: true, equipped: nextEquipped };
+        }
+        const sameSlot =
+          (isFrameCat &&
+            (s.category === 'VIP Frames' || s.category === 'Animated Frames')) ||
+          (isAssetCat &&
+            (s.category === 'Premium Assets' || s.category === 'Profile Decorations')) ||
+          s.category === item.category;
+        return sameSlot && nextEquipped ? { ...s, equipped: false } : s;
+      })
+    );
+
+    setProfile((prev) => {
+      const next: UserProfile = {
+        ...prev,
+        equippedFrameId: isFrameCat
+          ? nextEquipped
+            ? item.id
+            : null
+          : prev.equippedFrameId,
+        equippedEntryId:
+          item.category === 'Special Entry'
+            ? nextEquipped
+              ? item.id
+              : null
+            : prev.equippedEntryId,
+        equippedAssetId: isAssetCat
+          ? nextEquipped
+            ? item.id
+            : null
+          : prev.equippedAssetId,
+        equippedNameDecorId:
+          item.category === 'Name Decorations'
+            ? nextEquipped
+              ? item.id
+              : null
+            : prev.equippedNameDecorId,
+        equippedSpecialBadgeId:
+          item.category === 'Special Badges'
+            ? nextEquipped
+              ? item.id
+              : null
+            : prev.equippedSpecialBadgeId,
+      };
+      syncUserProfileToFirestore(next).catch(() => {});
+      return next;
+    });
+
+    return nextEquipped;
   };
 
   // Store Purchase / Equip Handler (Server-authoritative)
   const handlePurchaseOrEquipStoreItem = async (
     item: StoreItem
   ): Promise<{ ok: boolean; insufficient?: boolean }> => {
-    const equipLocally = () => {
-      setStoreItems((prev) =>
-        prev.map((s) =>
-          s.id === item.id
-            ? { ...s, owned: true, equipped: true }
-            : s.category === item.category
-            ? { ...s, equipped: false }
-            : s
-        )
-      );
-      setProfile((prev) => ({
-        ...prev,
-        equippedFrameId:
-          item.category === 'VIP Frames' ? item.id : prev.equippedFrameId,
-        equippedEntryId:
-          item.category === 'Special Entry' ? item.id : prev.equippedEntryId,
-        equippedAssetId:
-          item.category === 'Premium Assets' ? item.id : prev.equippedAssetId,
-      }));
-    };
-
     if (item.owned) {
-      equipLocally();
-      showToast(`${item.name} equipped!`);
+      const equippedNow = applyStoreItemEquipState(item);
+      showToast(equippedNow ? `${item.name} equipped!` : `${item.name} unequipped`);
       return { ok: true };
     }
 
-    try {
-      const res = await fetch('/api/store/purchase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: profile.userId, itemId: item.id }),
-      });
-      const data = await res.json();
-      if (res.status === 402) {
-        return { ok: false, insufficient: true };
-      }
-      if (!res.ok) {
-        showToast(data.error || 'Purchase failed');
-        return { ok: false };
-      }
-      if (data.account) syncAccountFromServer(data.account);
-      equipLocally();
-      showToast(`Purchased & equipped ${item.name}!`);
-      return { ok: true };
-    } catch {
-      showToast('Unable to reach server');
+    if (!requireAuthenticatedAction(`purchase ${item.name}`)) {
       return { ok: false };
     }
+
+    const res = await apiClient.post<{ account?: ServerWalletAccount }>(
+      '/api/store/purchase',
+      { userId: authUser?.uid || profile.userId, itemId: item.id }
+    );
+    if (res.status === 402) {
+      return { ok: false, insufficient: true };
+    }
+    if (!res.ok) {
+      showToast(res.error || 'Purchase failed');
+      return { ok: false };
+    }
+    if (res.data?.account) syncAccountFromServer(res.data.account);
+    applyStoreItemEquipState(item, true);
+    showToast(`Purchased & equipped ${item.name}!`);
+    return { ok: true };
   };
 
   // Server-Validated Gift Sending (Live & Rooms)
   const handleSendGift = async (gift: GiftItem, recipient: string): Promise<boolean> => {
+    if (!requireAuthenticatedAction('send gifts')) return false;
     if (profile.coins < gift.price) {
       showToast('Insufficient coin balance — recharge in Wallet');
       return false;
     }
-    try {
-      const res = await fetch('/api/gifts/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: profile.userId,
-          giftId: gift.id,
-          recipientName: recipient,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || 'Insufficient coins');
-        return false;
+    const res = await apiClient.post<{ account?: ServerWalletAccount }>(
+      '/api/gifts/send',
+      {
+        userId: authUser?.uid || profile.userId,
+        giftId: gift.id,
+        recipientName: recipient,
       }
-      if (data.account) syncAccountFromServer(data.account);
-      addActivityXp(LEVEL_CONFIG.xpRewards.sendGiftBonus);
-      showToast(`Sent ${gift.name} to ${recipient}`);
-      return true;
-    } catch {
-      showToast('Failed to send gift');
+    );
+    if (!res.ok) {
+      showToast(res.error || 'Insufficient coins');
       return false;
     }
+    if (res.data?.account) syncAccountFromServer(res.data.account);
+    addActivityXp(LEVEL_CONFIG.xpRewards.sendGiftBonus);
+    showToast(`Sent ${gift.name} to ${recipient}`);
+    return true;
   };
 
   // Coin-Based Audio / Video Call Flow
@@ -451,74 +681,63 @@ export default function App() {
     peerLevel: number,
     callType: 'audio' | 'video'
   ) => {
-    try {
-      const res = await fetch('/api/calls/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: profile.userId,
-          calleeName: peerName,
-          callType,
-          consentConfirmed: true,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || 'Unable to start call');
-        return;
-      }
-      if (data.account) syncAccountFromServer(data.account);
-      setPendingCallConsent(null);
-      setActiveCall({
-        callId: data.session.callId,
-        peerName,
-        peerAvatar,
-        peerLevel,
-        callType,
-        direction: 'outgoing',
-        ratePerMin: data.session.ratePerMin,
-        totalCharged: data.session.totalCharged,
-      });
+    if (!requireAuthenticatedAction(`start a ${callType} call`)) return;
+    const res = await apiClient.post<{
+      account?: ServerWalletAccount;
+      session?: { callId: string; ratePerMin: number; totalCharged: number };
+    }>('/api/calls/start', {
+      userId: authUser?.uid || profile.userId,
+      calleeName: peerName,
+      callType,
+      consentConfirmed: true,
+    });
+    if (!res.ok || !res.data?.session) {
+      showToast(res.error || 'Unable to start call');
+      return;
+    }
+    if (res.data.account) syncAccountFromServer(res.data.account);
+    setPendingCallConsent(null);
+    setActiveCall({
+      callId: res.data.session.callId,
+      peerName,
+      peerAvatar,
+      peerLevel,
+      callType,
+      direction: 'outgoing',
+      ratePerMin: res.data.session.ratePerMin,
+      totalCharged: res.data.session.totalCharged,
+    });
 
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: 'call:invite',
-            callId: data.session.callId,
-            callerName: profile.username,
-            callerAvatar: profile.avatar,
-            callerLevel: profile.level,
-            callType,
-          })
-        );
-      }
-    } catch {
-      showToast('Call server unavailable');
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'call:invite',
+          callId: res.data.session.callId,
+          callerName: profile.username,
+          callerAvatar: profile.avatar,
+          callerLevel: profile.level,
+          callType,
+        })
+      );
     }
   };
 
   const handleCallTick = async (callId: string): Promise<boolean> => {
-    try {
-      const res = await fetch('/api/calls/tick', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ callId }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || 'Insufficient coins — call ending');
-        return false;
-      }
-      if (data.account) syncAccountFromServer(data.account);
-      setActiveCall((prev) =>
-        prev && prev.callId === callId
-          ? { ...prev, totalCharged: data.session.totalCharged }
-          : prev
-      );
-      return true;
-    } catch {
+    const res = await apiClient.post<{
+      account?: ServerWalletAccount;
+      session?: { totalCharged: number };
+    }>('/api/calls/tick', { callId });
+    if (!res.ok || !res.data?.session) {
+      showToast(res.error || 'Insufficient coins — call ending');
       return false;
     }
+    if (res.data.account) syncAccountFromServer(res.data.account);
+    setActiveCall((prev) =>
+      prev && prev.callId === callId
+        ? { ...prev, totalCharged: res.data!.session!.totalCharged }
+        : prev
+    );
+    return true;
   };
 
   const handleEndCall = async (
@@ -529,16 +748,12 @@ export default function App() {
     const endingCall = activeCall;
     setActiveCall(null);
 
-    try {
-      const res = await fetch('/api/calls/end', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ callId }),
-      });
-      const data = await res.json();
-      if (data.account) syncAccountFromServer(data.account);
-    } catch {
-      // ignore
+    const res = await apiClient.post<{ account?: ServerWalletAccount }>(
+      '/api/calls/end',
+      { callId }
+    );
+    if (res.ok && res.data?.account) {
+      syncAccountFromServer(res.data.account);
     }
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -568,9 +783,25 @@ export default function App() {
   const handleSaveProfile = (
     updates: Pick<UserProfile, 'username' | 'bio' | 'avatar' | 'coverImage'>
   ) => {
-    setProfile((prev) => ({ ...prev, ...updates }));
+    setProfile((prev) => {
+      const next = { ...prev, ...updates };
+      syncUserProfileToFirestore(next).catch(() => {});
+      return next;
+    });
     setScreen('profile');
     showToast('Profile updated');
+  };
+
+  const handleUpdatePrivacyAndTheme = (
+    profilePrivacy: UserProfile['profilePrivacy'],
+    profileTheme: ProfileThemeId
+  ) => {
+    setProfile((prev) => {
+      const next = { ...prev, profilePrivacy, profileTheme };
+      syncUserProfileToFirestore(next).catch(() => {});
+      return next;
+    });
+    showToast('Privacy & theme updated');
   };
 
   const handleUploadComplete = (video: UserVideo) => {
@@ -601,6 +832,52 @@ export default function App() {
     }
     addActivityXp(LEVEL_CONFIG.xpRewards.uploadVideo, 'Upload Video');
     setScreen('profile');
+  };
+
+  // Moderation: Block & Report
+  const handleBlockUser = (name: string, reason: string) => {
+    setBlockedUsers((prev) => {
+      if (prev.some((b) => b.name.toLowerCase() === name.toLowerCase())) return prev;
+      return [
+        {
+          id: `blk-${Date.now()}`,
+          name,
+          reason,
+          blockedAt: 'Just now',
+        },
+        ...prev,
+      ];
+    });
+    showToast(`Blocked ${name}`);
+  };
+
+  const handleReportTarget = async (
+    targetName: string,
+    targetType: 'user' | 'live' | 'room' | 'video',
+    reason: string
+  ) => {
+    const res = await apiClient.post<{ report?: ReportHistoryItem }>('/api/reports', {
+      userId: authUser?.uid || profile.userId,
+      targetName,
+      targetType,
+      reason,
+    });
+    const rec: ReportHistoryItem = res.data?.report || {
+      id: `rep-${Date.now()}`,
+      targetName,
+      targetType,
+      reason,
+      status: 'open',
+      timestamp: 'Just now',
+    };
+    setReportHistory((prev) => [rec, ...prev]);
+    submitReportToFirestore({
+      targetId: targetName,
+      targetName,
+      targetType,
+      reason,
+    }).catch(() => {});
+    showToast('Moderation report submitted');
   };
 
   // Go Live Host Launch
@@ -796,6 +1073,34 @@ export default function App() {
         className="pointer-events-none fixed inset-x-0 top-0 h-72 bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.22),transparent_70%)] z-0"
       />
 
+      {/* Email Verification Reminder Banner */}
+      {authUser && !authUser.isAnonymous && authUser.email && !authUser.emailVerified && (
+        <div className="relative z-30">
+          <EmailVerificationBanner
+            email={authUser.email}
+            onResend={async () => {
+              try {
+                await resendVerificationEmail();
+                showToast('Verification email sent');
+              } catch (err: any) {
+                showToast(err?.message || 'Could not resend verification email');
+              }
+            }}
+            onRefresh={async () => {
+              if (auth.currentUser) {
+                await auth.currentUser.reload();
+                setAuthUser({ ...auth.currentUser } as User);
+                showToast(
+                  auth.currentUser.emailVerified
+                    ? 'Email verified!'
+                    : 'Still awaiting email verification'
+                );
+              }
+            }}
+          />
+        </div>
+      )}
+
       <div className="relative z-10">
         {screen === 'home' && (
           <HomeScreen
@@ -837,6 +1142,9 @@ export default function App() {
             equippedFrameId={profile.equippedFrameId}
             equippedEntryId={profile.equippedEntryId}
             equippedAssetId={profile.equippedAssetId}
+            equippedNameDecorId={profile.equippedNameDecorId}
+            equippedSpecialBadgeId={profile.equippedSpecialBadgeId}
+            transactions={wallet.transactions}
             onOpenWallet={() => setScreen('wallet')}
             onPreviewItem={(item) => setPreviewStoreItem(item)}
             onPurchaseOrEquip={handlePurchaseOrEquipStoreItem}
@@ -871,9 +1179,10 @@ export default function App() {
             onAcceptRequest={handleAcceptRequest}
             onDeclineRequest={handleDeclineRequest}
             onSendMessage={handleSendInboxMessage}
-            onStartCall={(peerName, peerAvatar, peerLevel, callType) =>
-              setPendingCallConsent({ peerName, peerAvatar, peerLevel, callType })
-            }
+            onStartCall={(peerName, peerAvatar, peerLevel, callType) => {
+              if (!requireAuthenticatedAction(`start a ${callType} call`)) return;
+              setPendingCallConsent({ peerName, peerAvatar, peerLevel, callType });
+            }}
             onUpdateNotifPrefs={(next) => {
               setNotificationPrefs(next);
               showToast('Notification preferences updated');
@@ -889,15 +1198,25 @@ export default function App() {
             achievements={achievements}
             myVideos={myVideos}
             savedVideos={savedVideos}
+            likedVideos={likedVideos}
+            repostedVideos={repostedVideos}
             onEditProfile={() => setScreen('edit-profile')}
             onPlayVideo={(v) => setPlayingVideo(v)}
-            onOpenCreateVideo={() => setScreen('upload-video')}
+            onOpenCreateVideo={() => {
+              if (!requireAuthenticatedAction('upload a video')) return;
+              setScreen('upload-video');
+            }}
             onOpenStore={() => setScreen('store')}
             onOpenLevels={() => setScreen('level-details')}
             onOpenAchievements={() => setScreen('achievements')}
             onOpenAgency={() => setScreen('agency')}
             onOpenWallet={() => setScreen('wallet')}
             onOpenRankings={() => setScreen('rankings')}
+            onOpenSettings={() => setScreen('account-settings')}
+            onOpenCallHistory={() => {
+              setInboxInitialTab('Calls');
+              setScreen('chat');
+            }}
             onShareProfile={() => {
               if (navigator.clipboard) {
                 navigator.clipboard
@@ -905,6 +1224,10 @@ export default function App() {
                   .catch(() => {});
               }
               showToast('Profile link copied!');
+            }}
+            onToggleEquipStoreItem={(item) => {
+              const equippedNow = applyStoreItemEquipState(item);
+              showToast(equippedNow ? `${item.name} equipped!` : `${item.name} unequipped`);
             }}
           />
         )}
@@ -976,6 +1299,95 @@ export default function App() {
         {screen === 'rankings' && (
           <RankingsScreen onBack={() => setScreen('profile')} />
         )}
+
+        {screen === 'account-settings' && (
+          <AccountSettingsScreen
+            profile={profile}
+            authEmail={authUser?.email || null}
+            isGuest={isGuest}
+            isAdmin={isAdmin}
+            linkedProviders={linkedProviders}
+            notificationPrefs={notificationPrefs}
+            blockedUsers={blockedUsers}
+            reportHistory={reportHistory}
+            language={language}
+            onBack={() => setScreen('profile')}
+            onEditProfile={() => setScreen('edit-profile')}
+            onChangePassword={async (currPwd, nextPwd) => {
+              try {
+                await changeAccountPassword(currPwd, nextPwd);
+                showToast('Password updated');
+                return { ok: true };
+              } catch (err: any) {
+                return { ok: false, error: err?.message || 'Password update failed.' };
+              }
+            }}
+            onLinkGoogle={async () => {
+              try {
+                await linkGuestWithGoogle();
+                showToast('Google account linked');
+                return { ok: true };
+              } catch (err: any) {
+                showToast(err?.message || 'Google link failed');
+                return { ok: false, error: err?.message };
+              }
+            }}
+            onUpdatePrivacy={handleUpdatePrivacyAndTheme}
+            onUnblockUser={(id) => {
+              setBlockedUsers((prev) => prev.filter((b) => b.id !== id));
+              showToast('User unblocked');
+            }}
+            onUpdateNotifPrefs={(next) => {
+              setNotificationPrefs(next);
+              showToast('Notification preferences saved');
+            }}
+            onChangeLanguage={(lang) => {
+              setLanguage(lang);
+              showToast(`Language set to ${lang}`);
+            }}
+            onEnablePushNotifications={async () => {
+              const res = await requestFcmPushToken();
+              showToast(
+                res.ok
+                  ? 'Push notifications enabled (FCM)'
+                  : res.reason || 'Push notifications unavailable'
+              );
+            }}
+            onOpenAdminDiagnostics={() => {
+              if (isAdmin) setScreen('admin-diagnostics');
+            }}
+            onLogout={async () => {
+              await signOutFirebase().catch(() => {});
+              setAuthUser(null);
+              setScreen('home');
+              setAuthModalMode('welcome');
+              setAuthModalOpen(true);
+              showToast('Logged out');
+            }}
+            onDeleteAccount={async () => {
+              try {
+                await deleteCurrentFirebaseAccount();
+                setAuthUser(null);
+                setScreen('home');
+                setAuthModalMode('welcome');
+                setAuthModalOpen(true);
+                showToast('Account deleted');
+                return { ok: true };
+              } catch (err: any) {
+                showToast(err?.message || 'Recent login required to delete account');
+                return { ok: false, error: err?.message };
+              }
+            }}
+          />
+        )}
+
+        {screen === 'admin-diagnostics' && (
+          <AdminDiagnosticsScreen
+            isAdmin={isAdmin}
+            adminEmail={authUser?.email || null}
+            onBack={() => setScreen('account-settings')}
+          />
+        )}
       </div>
 
       {/* Minimized Floating Live Player (Separate from Room Minimize) */}
@@ -1017,14 +1429,17 @@ export default function App() {
         onClose={() => setCreateMenuOpen(false)}
         onSelectUploadVideo={() => {
           setCreateMenuOpen(false);
+          if (!requireAuthenticatedAction('upload a video')) return;
           setScreen('upload-video');
         }}
         onSelectGoLive={() => {
           setCreateMenuOpen(false);
+          if (!requireAuthenticatedAction('go live')) return;
           setScreen('go-live');
         }}
         onSelectCreateRoom={() => {
           setCreateMenuOpen(false);
+          if (!requireAuthenticatedAction('create a party room')) return;
           setScreen('create-room');
         }}
       />
@@ -1038,6 +1453,7 @@ export default function App() {
           userCoins={profile.coins}
           username={profile.username}
           userLevel={profile.level}
+          userVipLevel={profile.vipLevel}
           onMinimize={() => {
             setLiveMinimized(true);
             showToast('Live minimized — tap floating card to return');
@@ -1050,6 +1466,8 @@ export default function App() {
           onSendGift={handleSendGift}
           onOpenUserInfo={(u) => setUserInfoTarget(u)}
           onAddActivityXp={(amt) => addActivityXp(amt)}
+          onBlockUser={handleBlockUser}
+          onReportTarget={handleReportTarget}
         />
       )}
 
@@ -1109,7 +1527,7 @@ export default function App() {
         onOpenLevelDetails={() => setScreen('level-details')}
       />
 
-      {/* WebRTC Audio / Video Call Overlay + Server Billing */}
+      {/* WebRTC / Agora Audio / Video Call Overlay + Server Billing */}
       <CallOverlay
         pendingConsent={pendingCallConsent}
         incomingCall={incomingCall}
@@ -1142,11 +1560,39 @@ export default function App() {
         onOpenWallet={() => setScreen('wallet')}
       />
 
+      {/* Auth, Splash & Guest Gate */}
+      <SplashScreen visible={splashVisible} />
+
+      <AuthFlowScreen
+        key={`${authModalOpen ? 'open' : 'closed'}-${authModalMode}`}
+        open={authModalOpen}
+        initialMode={authModalMode}
+        onGoogleLogin={handleGoogleLogin}
+        onFacebookLogin={handleFacebookLogin}
+        onEmailLogin={handleEmailLogin}
+        onEmailSignup={handleEmailSignup}
+        onForgotPassword={handleForgotPassword}
+        onGuestExplore={handleGuestExplore}
+        onClose={authUser ? () => setAuthModalOpen(false) : undefined}
+      />
+
+      <GuestRestrictionModal
+        actionLabel={guestPromptAction}
+        onClose={() => setGuestPromptAction(null)}
+        onSignInGoogle={() => {
+          handleGoogleLogin();
+        }}
+        onOpenAuthModal={() => {
+          setAuthModalMode('login');
+          setAuthModalOpen(true);
+        }}
+      />
+
       {/* Non-blocking Status Toast */}
       {toastMessage && (
         <div
           role="status"
-          className="fixed top-16 left-1/2 -translate-x-1/2 z-[70] px-4 py-2 rounded-full bg-[#1C0F36]/95 backdrop-blur-md border border-amber-400/55 text-xs font-semibold text-amber-200 shadow-xl whitespace-nowrap"
+          className="fixed top-16 left-1/2 -translate-x-1/2 z-[95] px-4 py-2 rounded-full bg-[#1C0F36]/95 backdrop-blur-md border border-amber-400/55 text-xs font-semibold text-amber-200 shadow-xl whitespace-nowrap"
         >
           {toastMessage}
         </div>
