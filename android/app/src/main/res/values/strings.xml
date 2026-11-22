@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Mizo Live</string>
-    <string name="title_activity_main">Mizo Live</string>
+    <string name="app_name">MizoLive</string>
+    <string name="title_activity_main">MizoLive</string>
     <string name="package_name">com.mizolive.app</string>
     <string name="custom_url_scheme">mizolive</string>
 </resources>

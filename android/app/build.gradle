@@ -15,14 +15,24 @@ android {
         }
     }
 
+    def keystorePropertiesFile = rootProject.file("key.properties")
+    def keystoreProperties = new Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+    }
+
+    def resolvedStoreFilePath = keystoreProperties.getProperty("storeFile") ?: System.getenv("MIZO_KEYSTORE_PATH")
+    def resolvedStorePassword = keystoreProperties.getProperty("storePassword") ?: System.getenv("MIZO_KEYSTORE_PASSWORD")
+    def resolvedKeyAlias = keystoreProperties.getProperty("keyAlias") ?: System.getenv("MIZO_KEY_ALIAS")
+    def resolvedKeyPassword = keystoreProperties.getProperty("keyPassword") ?: System.getenv("MIZO_KEY_PASSWORD")
+
     signingConfigs {
         release {
-            def keystorePath = System.getenv("MIZO_KEYSTORE_PATH")
-            if (keystorePath) {
-                storeFile file(keystorePath)
-                storePassword System.getenv("MIZO_KEYSTORE_PASSWORD")
-                keyAlias System.getenv("MIZO_KEY_ALIAS")
-                keyPassword System.getenv("MIZO_KEY_PASSWORD")
+            if (resolvedStoreFilePath && resolvedStorePassword && resolvedKeyAlias && resolvedKeyPassword) {
+                storeFile file(resolvedStoreFilePath)
+                storePassword resolvedStorePassword
+                keyAlias resolvedKeyAlias
+                keyPassword resolvedKeyPassword
             }
         }
     }
@@ -36,7 +46,7 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            if (System.getenv("MIZO_KEYSTORE_PATH")) {
+            if (resolvedStoreFilePath && resolvedStorePassword && resolvedKeyAlias && resolvedKeyPassword) {
                 signingConfig signingConfigs.release
             }
         }

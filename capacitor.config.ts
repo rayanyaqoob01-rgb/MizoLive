@@ -2,17 +2,21 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.mizolive.app',
-  appName: 'Mizo Live',
+  appName: 'MizoLive',
   webDir: 'dist',
   server: {
     androidScheme: 'https',
+    iosScheme: 'https',
   },
   plugins: {
     SplashScreen: {
       launchAutoHide: true,
       backgroundColor: '#06040B',
+      showSpinner: false,
+      androidScaleType: 'CENTER_CROP',
     },
   },
 };
 
 export default config;
+

@@ -10,89 +10,98 @@ on:
 
 jobs:
   validate:
-    name: Analyze & Test Flutter App
+    name: TypeScript Check & Shared Web Validation
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter_app
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Flutter (stable)
-        uses: subosito/flutter-action@v2
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
         with:
-          channel: "stable"
-          cache: true
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
-        run: flutter pub get
+        run: npm ci
 
-      - name: Run static analyzer
-        run: flutter analyze --no-fatal-infos
+      - name: TypeScript typecheck
+        run: npm run lint
 
-      - name: Run unit & widget tests
-        run: flutter test
+      - name: Verify Vite production build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
+        run: |
+          npm run build
+          test -f dist/index.html
 
   build-web:
-    name: Build Production Web (build/web)
+    name: Build Production Web (dist/)
     needs: validate
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter_app
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Flutter (stable)
-        uses: subosito/flutter-action@v2
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
         with:
-          channel: "stable"
-          cache: true
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
-        run: flutter pub get
+        run: npm ci
 
-      - name: Build Flutter Web Release
+      - name: Build production web bundle
         env:
-          MIZO_API_BASE_URL: ${{ secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
-        run: |
-          flutter build web --release \
-            --dart-define=MIZO_API_BASE_URL="$MIZO_API_BASE_URL"
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
+        run: npm run build
 
       - name: Upload Web Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MizoLive-Web
-          path: flutter_app/build/web
+          path: dist/
           retention-days: 30
 
   build-android:
-    name: Build Android Release APK & AAB
+    name: Build Android Debug APK, Release APK & AAB
     needs: validate
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter_app
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Set up Java 21 (Required by Capacitor 8 Android Gradle)
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "17"
+          java-version: "21"
 
-      - name: Set up Flutter (stable)
-        uses: subosito/flutter-action@v2
+      - name: Set up Android SDK (API 36)
+        uses: android-actions/setup-android@v3
         with:
-          channel: "stable"
-          cache: true
+          packages: "platforms;android-36 build-tools;36.0.0"
 
-      - name: Install dependencies
-        run: flutter pub get
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Web Assets & Sync Capacitor Android
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
+        run: |
+          npm run build
+          npx cap sync android
+          chmod +x android/gradlew
 
       - name: Decode Firebase google-services.json (if configured)
         env:
@@ -102,6 +111,19 @@ jobs:
             echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > android/app/google-services.json
           fi
 
+      - name: Build Debug APK
+        working-directory: android
+        run: |
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/MizoLive-debug.apk
+
+      - name: Upload Android Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MizoLive-Android-Debug-APK
+          path: android/app/build/outputs/apk/debug/MizoLive-debug.apk
+          retention-days: 30
+
       - name: Configure Android Release Keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -110,85 +132,88 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
-            echo "ERROR: Missing Android signing secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD)."
+            echo "ERROR: Missing required Android release signing GitHub Secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD)."
             exit 1
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/mizolive-upload-key.jks
           cat <<EOF > android/key.properties
-          storeFile=${{ github.workspace }}/flutter_app/android/app/mizolive-upload-key.jks
+          storeFile=${{ github.workspace }}/android/app/mizolive-upload-key.jks
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
           keyPassword=$ANDROID_KEY_PASSWORD
           EOF
 
-      - name: Build Release APK & AAB
-        env:
-          MIZO_API_BASE_URL: ${{ secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
+      - name: Build Signed Release APK & Play Store AAB
+        working-directory: android
         run: |
-          flutter build apk --release \
-            --dart-define=MIZO_API_BASE_URL="$MIZO_API_BASE_URL"
-          flutter build appbundle --release \
-            --dart-define=MIZO_API_BASE_URL="$MIZO_API_BASE_URL"
-          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/MizoLive-release.apk
-          cp build/app/outputs/bundle/release/app-release.aab build/app/outputs/bundle/release/MizoLive-release.aab
+          ./gradlew assembleRelease bundleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/MizoLive-release.apk
+          cp app/build/outputs/bundle/release/app-release.aab app/build/outputs/bundle/release/MizoLive-release.aab
 
-      - name: Upload Android APK Artifact
+      - name: Upload Android Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MizoLive-Android-APK
-          path: flutter_app/build/app/outputs/flutter-apk/MizoLive-release.apk
+          name: MizoLive-Android-Release-APK
+          path: android/app/build/outputs/apk/release/MizoLive-release.apk
           retention-days: 30
 
-      - name: Upload Android AAB Artifact
+      - name: Upload Android Release AAB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MizoLive-Android-AAB
-          path: flutter_app/build/app/outputs/bundle/release/MizoLive-release.aab
+          name: MizoLive-Android-Release-AAB
+          path: android/app/build/outputs/bundle/release/MizoLive-release.aab
           retention-days: 30
 
   build-ios:
-    name: Build Signed iOS IPA
+    name: Build iOS IPA
     needs: validate
     runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: flutter_app
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Flutter (stable)
-        uses: subosito/flutter-action@v2
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
         with:
-          channel: "stable"
-          cache: true
+          node-version: "22"
+          cache: "npm"
 
-      - name: Install Flutter & CocoaPods dependencies
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Web Assets & Sync Capacitor iOS
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
         run: |
-          flutter pub get
-          cd ios && pod install --repo-update
+          npm run build
+          npx cap sync ios
 
       - name: Decode Firebase GoogleService-Info.plist (if configured)
         env:
           GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
         run: |
           if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
-            echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > ios/Runner/GoogleService-Info.plist
+            echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > ios/App/App/GoogleService-Info.plist
           fi
 
-      - name: Verify Apple Signing Secrets & Build IPA
+      - name: Build Signed iOS Archive & Export IPA (or Unsigned Compile Check)
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
           APPLE_EXPORT_OPTIONS_PLIST_BASE64: ${{ secrets.APPLE_EXPORT_OPTIONS_PLIST_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          MIZO_API_BASE_URL: ${{ secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
         run: |
           if [ -z "$APPLE_CERTIFICATE_BASE64" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_PROVISIONING_PROFILE_BASE64" ] || [ -z "$APPLE_EXPORT_OPTIONS_PLIST_BASE64" ] || [ -z "$KEYCHAIN_PASSWORD" ]; then
-            echo "Apple signing secrets are not configured yet. Running unsigned iOS compile check only (no App Store IPA produced)."
-            flutter build ios --release --no-codesign \
-              --dart-define=MIZO_API_BASE_URL="$MIZO_API_BASE_URL"
+            echo "Apple Developer signing secrets are not configured yet."
+            echo "Running unsigned iOS device compile verification only (no App Store IPA exported)."
+            xcodebuild \
+              -project ios/App/App.xcodeproj \
+              -scheme App \
+              -configuration Release \
+              -sdk iphoneos \
+              CODE_SIGNING_ALLOWED=NO \
+              build
             echo "MISSING_APPLE_SIGNING=true" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -197,6 +222,8 @@ jobs:
           PP_PATH="$RUNNER_TEMP/mizo_profile.mobileprovision"
           EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          ARCHIVE_PATH="$RUNNER_TEMP/MizoLive.xcarchive"
+          EXPORT_DIR="$RUNNER_TEMP/ipa-export"
 
           echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
           echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
@@ -206,14 +233,30 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/mizo_profile.mobileprovision
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PP_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/mizo_profile.mobileprovision"
 
-          flutter build ipa --release \
-            --export-options-plist="$EXPORT_PLIST" \
-            --dart-define=MIZO_API_BASE_URL="$MIZO_API_BASE_URL"
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$ARCHIVE_PATH" \
+            archive
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportOptionsPlist "$EXPORT_PLIST" \
+            -exportPath "$EXPORT_DIR"
+
+          mkdir -p ios-artifacts
+          IPA_FILE=$(find "$EXPORT_DIR" -name "*.ipa" | head -n 1)
+          test -n "$IPA_FILE"
+          cp "$IPA_FILE" ios-artifacts/MizoLive-iOS.ipa
 
           rm -f "$CERT_PATH" "$PP_PATH" "$EXPORT_PLIST"
           security delete-keychain "$KEYCHAIN_PATH" || true
@@ -223,5 +266,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MizoLive-iOS-IPA
-          path: flutter_app/build/ios/ipa/*.ipa
+          path: ios-artifacts/MizoLive-iOS.ipa
           retention-days: 30

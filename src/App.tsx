@@ -11,6 +11,7 @@ import {
   VideoPlayerModal,
 } from './components/Modals';
 import { UserInfoModal, UserInfoTarget } from './components/UserInfoModal';
+import { resolveWsUrl } from './config/runtime';
 import { getXpRequiredForLevel, LEVEL_CONFIG } from './data/levels';
 import {
   INITIAL_ACHIEVEMENTS,
@@ -282,8 +283,7 @@ export default function App() {
   }, [authUser?.uid]);
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    const ws = new WebSocket(resolveWsUrl());
     wsRef.current = ws;
 
     ws.onmessage = (event) => {

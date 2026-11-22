@@ -189,7 +189,7 @@ async function startServer() {
       const isAllowed =
         explicitOrigins.includes(origin) ||
         /^https:\/\/[a-z0-9-]+\.(web\.app|firebaseapp\.com|run\.app)$/i.test(origin) ||
-        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+        /^(https?|capacitor):\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
 
       if (isAllowed) {
         res.setHeader('Access-Control-Allow-Origin', origin);

@@ -1,0 +1,44 @@
+name: MizoLive Web Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-web:
+    name: Build Production Web (dist/)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run lint
+
+      - name: Build production web bundle
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || secrets.MIZO_API_BASE_URL || 'https://ais-dev-my3putbruhvu76iatjzmm7-15664674133.asia-northeast1.run.app' }}
+        run: npm run build
+
+      - name: Verify production bundle output
+        run: |
+          test -f dist/index.html
+          ls -lh dist/
+
+      - name: Upload Web Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MizoLive-Web
+          path: dist/
+          retention-days: 30

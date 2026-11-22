@@ -1,3 +1,5 @@
+import { resolveApiUrl } from '../config/runtime';
+
 export interface ApiDiagnosticEntry {
   id: string;
   endpoint: string;
@@ -67,7 +69,7 @@ class CentralizedApiClient {
 
     try {
       const providedHeaders = this.authHeadersProvider ? this.authHeadersProvider() : {};
-      const res = await fetch(endpoint, {
+      const res = await fetch(resolveApiUrl(endpoint), {
         method,
         signal: controller.signal,
         headers: {
