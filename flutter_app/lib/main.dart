@@ -308,6 +308,18 @@ class _MizoShell extends StatelessWidget {
         body = ProfileScreen(state: state);
     }
 
+    final isWide = MediaQuery.sizeOf(context).width >= 840;
+    final framedBody = isWide
+        ? Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: state.currentTab == MainTab.videos ? 460 : 1140,
+              ),
+              child: body,
+            ),
+          )
+        : body;
+
     return Stack(
       children: [
         Scaffold(
@@ -379,15 +391,31 @@ class _MizoShell extends StatelessWidget {
                     ),
                   ),
                 ),
-              Expanded(child: body),
+              Expanded(
+                child: isWide
+                    ? Row(
+                        children: [
+                          MizoDesktopRail(
+                            activeTab: state.currentTab,
+                            unreadCount: state.totalUnreadInbox,
+                            onSelectTab: (tab) => state.setTab(tab),
+                            onOpenCreate: () => _openCreateModal(context),
+                          ),
+                          Expanded(child: framedBody),
+                        ],
+                      )
+                    : framedBody,
+              ),
             ],
           ),
-          bottomNavigationBar: MizoBottomNavBar(
-            activeTab: state.currentTab,
-            unreadCount: state.totalUnreadInbox,
-            onSelectTab: (tab) => state.setTab(tab),
-            onOpenCreate: () => _openCreateModal(context),
-          ),
+          bottomNavigationBar: isWide
+              ? null
+              : MizoBottomNavBar(
+                  activeTab: state.currentTab,
+                  unreadCount: state.totalUnreadInbox,
+                  onSelectTab: (tab) => state.setTab(tab),
+                  onOpenCreate: () => _openCreateModal(context),
+                ),
         ),
 
         if (state.showAuthScreen)

@@ -79,15 +79,20 @@ class _RoomsScreenState extends State<RoomsScreen> {
             ),
           ),
           Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.all(16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.78,
-              ),
-              itemCount: rooms.length,
+            child: LayoutBuilder(
+              builder: (_, constraints) {
+                final cols = constraints.maxWidth >= 960
+                    ? 4
+                    : (constraints.maxWidth >= 620 ? 3 : 2);
+                return GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: 0.78,
+                  ),
+                  itemCount: rooms.length,
               itemBuilder: (_, idx) {
                 final r = rooms[idx];
                 return GestureDetector(
@@ -147,6 +152,8 @@ class _RoomsScreenState extends State<RoomsScreen> {
                       ],
                     ),
                   ),
+                );
+                  },
                 );
               },
             ),

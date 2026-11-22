@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,10 +7,26 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:image_picker/image_picker.dart';
 import '../config/app_config.dart';
 import '../models/mizo_models.dart';
 import 'api_client.dart';
+
+enum OperationType { create, update, delete, list, get, write }
+
+class PhoneOtpSession {
+  final String? verificationId;
+  final ConfirmationResult? webConfirmation;
+  final bool autoSignedIn;
+
+  const PhoneOtpSession({
+    this.verificationId,
+    this.webConfirmation,
+    this.autoSignedIn = false,
+  });
+}
 
 class FirebaseDiagnosticsState {
   bool coreReady = false;
@@ -32,6 +49,38 @@ class MizoFirebaseService {
 
   FirebaseAuth get auth => _auth!;
   FirebaseFirestore get db => _db!;
+
+  GoogleSignIn _createGoogleSignIn() => GoogleSignIn(
+        clientId: kIsWeb ? AppConfig.googleWebClientId : null,
+        scopes: const ['email', 'profile'],
+      );
+
+  Never _handleFirestoreError(
+    Object error,
+    OperationType operationType,
+    String? path,
+  ) {
+    final user = _auth?.currentUser;
+    final errInfo = <String, dynamic>{
+      'error': error.toString(),
+      'operationType': operationType.name,
+      'path': path,
+      'authInfo': {
+        'userId': user?.uid,
+        'email': user?.email,
+        'emailVerified': user?.emailVerified,
+        'isAnonymous': user?.isAnonymous,
+        'tenantId': user?.tenantId,
+        'providerInfo': user?.providerData
+                .map((p) => {'providerId': p.providerId, 'email': p.email})
+                .toList() ??
+            [],
+      },
+    };
+    final encoded = jsonEncode(errInfo);
+    MizoApiClient.instance.recordExternalError('firestore/${operationType.name}', encoded, 403);
+    throw Exception(encoded);
+  }
 
   Future<void> initialize() async {
     try {
@@ -127,7 +176,12 @@ class MizoFirebaseService {
   }
 
   Future<UserCredential> signInWithGoogle() async {
-    final googleUser = await GoogleSignIn().signIn();
+    if (kIsWeb) {
+      final res = await auth.signInWithPopup(GoogleAuthProvider());
+      await persistSessionToken(res.user);
+      return res;
+    }
+    final googleUser = await _createGoogleSignIn().signIn();
     if (googleUser == null) {
       throw Exception('Google Sign-In cancelled by user.');
     }
@@ -169,6 +223,71 @@ class MizoFirebaseService {
     return res;
   }
 
+  Future<PhoneOtpSession> startPhoneOtp(String phoneNumber) async {
+    final trimmed = phoneNumber.trim();
+    if (trimmed.isEmpty || !trimmed.startsWith('+')) {
+      throw Exception('Enter phone number in E.164 format (e.g. +14155550100).');
+    }
+    if (kIsWeb) {
+      final conf = await auth.signInWithPhoneNumber(trimmed);
+      return PhoneOtpSession(webConfirmation: conf);
+    }
+    final completer = Completer<PhoneOtpSession>();
+    await auth.verifyPhoneNumber(
+      phoneNumber: trimmed,
+      verificationCompleted: (PhoneAuthCredential cred) async {
+        final res = await auth.signInWithCredential(cred);
+        await persistSessionToken(res.user);
+        if (!completer.isCompleted) {
+          completer.complete(const PhoneOtpSession(autoSignedIn: true));
+        }
+      },
+      verificationFailed: (FirebaseAuthException e) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            Exception(e.message ?? 'Phone OTP failed (${e.code}).'),
+          );
+        }
+      },
+      codeSent: (String verificationId, int? resendToken) {
+        if (!completer.isCompleted) {
+          completer.complete(PhoneOtpSession(verificationId: verificationId));
+        }
+      },
+      codeAutoRetrievalTimeout: (String verificationId) {
+        if (!completer.isCompleted) {
+          completer.complete(PhoneOtpSession(verificationId: verificationId));
+        }
+      },
+    );
+    return completer.future;
+  }
+
+  Future<UserCredential> verifyPhoneOtp(
+    PhoneOtpSession session,
+    String smsCode,
+  ) async {
+    final code = smsCode.trim();
+    if (code.length < 4) {
+      throw Exception('Enter the SMS verification OTP code.');
+    }
+    if (session.webConfirmation != null) {
+      final res = await session.webConfirmation!.confirm(code);
+      await persistSessionToken(res.user);
+      return res;
+    }
+    if (session.verificationId == null) {
+      throw Exception('Missing verification ID. Request a new OTP code.');
+    }
+    final cred = PhoneAuthProvider.credential(
+      verificationId: session.verificationId!,
+      smsCode: code,
+    );
+    final res = await auth.signInWithCredential(cred);
+    await persistSessionToken(res.user);
+    return res;
+  }
+
   Future<void> sendPasswordReset(String email) =>
       auth.sendPasswordResetEmail(email: email.trim());
 
@@ -184,7 +303,11 @@ class MizoFirebaseService {
       await signInWithGoogle();
       return;
     }
-    final googleUser = await GoogleSignIn().signIn();
+    if (kIsWeb) {
+      await user.linkWithPopup(GoogleAuthProvider());
+      return;
+    }
+    final googleUser = await _createGoogleSignIn().signIn();
     if (googleUser == null) throw Exception('Google linking cancelled.');
     final googleAuth = await googleUser.authentication;
     final cred = GoogleAuthProvider.credential(
@@ -209,7 +332,7 @@ class MizoFirebaseService {
 
   Future<void> signOut() async {
     try {
-      await GoogleSignIn().signOut();
+      await _createGoogleSignIn().signOut();
     } catch (_) {}
     await _auth?.signOut();
     await MizoApiClient.instance.clearSecureTokens();
@@ -234,20 +357,27 @@ class MizoFirebaseService {
       diagnostics.fcmStatus = token != null ? 'ready' : 'unavailable';
       final user = _auth?.currentUser;
       if (token != null && user != null && _db != null) {
-        await _db!
-            .collection('users')
-            .doc(user.uid)
-            .collection('private')
-            .doc('info')
-            .set({
-          'uid': user.uid,
-          'fcmToken': token,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        final path = 'users/${user.uid}/private/info';
+        try {
+          await _db!
+              .collection('users')
+              .doc(user.uid)
+              .collection('private')
+              .doc('info')
+              .set({
+            'uid': user.uid,
+            'fcmToken': token,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          _handleFirestoreError(e, OperationType.write, path);
+        }
       }
       return token;
     } catch (e) {
-      diagnostics.fcmStatus = 'needs_google_services_json';
+      diagnostics.fcmStatus = kIsWeb
+          ? 'needs_web_vapid_key'
+          : 'needs_platform_push_config';
       MizoApiClient.instance.recordExternalError('firebase/fcm', e.toString());
       return null;
     }
@@ -257,39 +387,55 @@ class MizoFirebaseService {
     final user = _auth?.currentUser;
     if (user == null || user.isAnonymous || _db == null) return;
 
+    final path = 'users/${user.uid}';
     final ref = _db!.collection('users').doc(user.uid);
     try {
       final snap = await ref.get();
-      final payload = <String, dynamic>{
-        'uid': user.uid,
-        'userId': profile.userId,
-        'username': profile.username,
-        'bio': profile.bio,
-        'avatar': profile.avatar,
-        'coverImage': profile.coverImage,
-        'profileTheme': profile.profileTheme,
-        'profilePrivacy': profile.profilePrivacy,
-        'level': profile.level.clamp(1, 99),
-        'xp': profile.xp,
-        'equippedFrameId': profile.equippedFrameId ?? '',
-        'equippedEntryId': profile.equippedEntryId ?? '',
-        'equippedAssetId': profile.equippedAssetId ?? '',
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
       if (!snap.exists) {
-        payload['verified'] = false;
-        payload['vipLevel'] = 0;
-        payload['svipLevel'] = 0;
-        payload['followersCount'] = profile.followers;
-        payload['followingCount'] = profile.following;
-        payload['totalLikes'] = 7500;
-        payload['totalProfileViews'] = profile.totalProfileViews;
-        payload['createdAt'] = FieldValue.serverTimestamp();
+        await ref.set({
+          'uid': user.uid,
+          'userId': profile.userId,
+          'username': profile.username.trim().substring(
+              0, profile.username.trim().length.clamp(1, 40)),
+          'bio': profile.bio.substring(0, profile.bio.length.clamp(0, 240)),
+          'avatar': profile.avatar,
+          'coverImage': profile.coverImage,
+          'profileTheme': profile.profileTheme,
+          'profilePrivacy': profile.profilePrivacy,
+          'level': profile.level.clamp(1, 99),
+          'xp': profile.xp,
+          'verified': false,
+          'vipLevel': 0,
+          'svipLevel': 0,
+          'followersCount': profile.followers,
+          'followingCount': profile.following,
+          'totalLikes': 7500,
+          'totalProfileViews': profile.totalProfileViews,
+          'equippedFrameId': profile.equippedFrameId ?? '',
+          'equippedEntryId': profile.equippedEntryId ?? '',
+          'equippedAssetId': profile.equippedAssetId ?? '',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        await ref.update({
+          'username': profile.username.trim().substring(
+              0, profile.username.trim().length.clamp(1, 40)),
+          'bio': profile.bio.substring(0, profile.bio.length.clamp(0, 240)),
+          'avatar': profile.avatar,
+          'coverImage': profile.coverImage,
+          'profileTheme': profile.profileTheme,
+          'profilePrivacy': profile.profilePrivacy,
+          'equippedFrameId': profile.equippedFrameId ?? '',
+          'equippedEntryId': profile.equippedEntryId ?? '',
+          'equippedAssetId': profile.equippedAssetId ?? '',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       }
-      await ref.set(payload, SetOptions(merge: true));
     } catch (e) {
-      MizoApiClient.instance
-          .recordExternalError('firestore/syncProfile', e.toString(), 403);
+      try {
+        _handleFirestoreError(e, OperationType.write, path);
+      } catch (_) {}
     }
   }
 
@@ -314,21 +460,28 @@ class MizoFirebaseService {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (e) {
-      MizoApiClient.instance
-          .recordExternalError('firestore/report', e.toString(), 403);
+      try {
+        _handleFirestoreError(e, OperationType.create, 'reports');
+      } catch (_) {}
     }
   }
 
-  Future<String?> uploadFile(String folder, File file) async {
+  Future<String?> uploadXFile(String folder, XFile file) async {
     final user = _auth?.currentUser;
     if (user == null || _storage == null) return null;
     try {
-      final name = '${DateTime.now().millisecondsSinceEpoch}_${file.uri.pathSegments.last}';
+      final bytes = await file.readAsBytes();
+      final rawName = file.name.isNotEmpty ? file.name : 'upload.bin';
+      final safeName = rawName.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
       final path = folder == 'profile'
-          ? 'users/${user.uid}/profile/$name'
-          : '$folder/${user.uid}/$name';
+          ? 'users/${user.uid}/profile/${DateTime.now().millisecondsSinceEpoch}_$safeName'
+          : '$folder/${user.uid}/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+      final lower = safeName.toLowerCase();
+      final contentType = lower.endsWith('.mp4') || lower.endsWith('.mov')
+          ? 'video/mp4'
+          : 'image/jpeg';
       final ref = _storage!.ref(path);
-      await ref.putFile(file);
+      await ref.putData(bytes, SettableMetadata(contentType: contentType));
       return await ref.getDownloadURL();
     } catch (e) {
       MizoApiClient.instance.recordExternalError('storage/upload', e.toString());

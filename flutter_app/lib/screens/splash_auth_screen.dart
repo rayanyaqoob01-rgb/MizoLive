@@ -66,10 +66,13 @@ class AuthScreenView extends StatefulWidget {
 }
 
 class _AuthScreenViewState extends State<AuthScreenView> {
-  String _mode = 'welcome'; // welcome | login | signup | forgot
+  String _mode = 'welcome'; // welcome | login | signup | forgot | phone
   final _emailCtrl = TextEditingController();
   final _pwdCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _otpCtrl = TextEditingController();
+  PhoneOtpSession? _otpSession;
   bool _obscure = true;
   bool _busy = false;
   String? _error;
@@ -80,6 +83,8 @@ class _AuthScreenViewState extends State<AuthScreenView> {
     _emailCtrl.dispose();
     _pwdCtrl.dispose();
     _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _otpCtrl.dispose();
     super.dispose();
   }
 
@@ -133,6 +138,7 @@ class _AuthScreenViewState extends State<AuthScreenView> {
                         TextButton.icon(
                           onPressed: () => setState(() {
                             _mode = 'welcome';
+                            _otpSession = null;
                             _error = null;
                             _success = null;
                           }),
@@ -152,13 +158,13 @@ class _AuthScreenViewState extends State<AuthScreenView> {
                   const Center(child: MizoLogoMark(size: 56)),
                   const SizedBox(height: 12),
                   Text(
-                    _mode == 'welcome'
-                        ? 'Welcome to MizoLive'
-                        : _mode == 'login'
-                            ? 'Sign In'
-                            : _mode == 'signup'
-                                ? 'Create Account'
-                                : 'Recover Password',
+                    switch (_mode) {
+                      'login' => 'Sign In',
+                      'signup' => 'Create Account',
+                      'forgot' => 'Recover Password',
+                      'phone' => 'Phone OTP Verification',
+                      _ => 'Welcome to MizoLive',
+                    },
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 22,
@@ -249,7 +255,21 @@ class _AuthScreenViewState extends State<AuthScreenView> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                            color: MizoColors.neonPurple.withValues(alpha: 0.6)),
+                        minimumSize: const Size.fromHeight(44),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: () => setState(() => _mode = 'phone'),
+                      icon: const Icon(Icons.sms_outlined, size: 18),
+                      label: const Text('Phone SMS OTP Sign In'),
+                    ),
+                    const SizedBox(height: 10),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: MizoColors.goldLight,
@@ -266,11 +286,69 @@ class _AuthScreenViewState extends State<AuthScreenView> {
                                   await MizoFirebaseService.instance
                                       .signInAsGuest();
                                 } catch (_) {
-                                  // Allow browsing if anonymous provider disabled
+                                  // Allow guest browsing when anonymous provider is off
                                 }
                               }),
                       icon: const Icon(Icons.auto_awesome, size: 18),
-                      label: const Text('Explore as Guest (Anonymous)'),
+                      label: const Text('Explore as Guest'),
+                    ),
+                  ] else if (_mode == 'phone') ...[
+                    TextField(
+                      controller: _phoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Phone Number (E.164 e.g. +14155550100)',
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                    ),
+                    if (_otpSession != null) ...[
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _otpCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: '6-Digit SMS OTP Code',
+                          prefixIcon: Icon(Icons.pin_outlined),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: MizoColors.gold,
+                        foregroundColor: const Color(0xFF1E0B3B),
+                        minimumSize: const Size.fromHeight(48),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: _busy
+                          ? null
+                          : () async {
+                              if (_otpSession == null) {
+                                await _runAuth(() async {
+                                  final session = await MizoFirebaseService
+                                      .instance
+                                      .startPhoneOtp(_phoneCtrl.text);
+                                  if (!session.autoSignedIn && mounted) {
+                                    setState(() => _otpSession = session);
+                                  }
+                                },
+                                    onOk:
+                                        'OTP verification code sent via SMS.');
+                              } else {
+                                await _runAuth(() => MizoFirebaseService
+                                    .instance
+                                    .verifyPhoneOtp(_otpSession!, _otpCtrl.text));
+                              }
+                            },
+                      child: Text(
+                        _busy
+                            ? 'Verifying...'
+                            : _otpSession == null
+                                ? 'Send OTP Code'
+                                : 'Verify OTP & Sign In',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
                     ),
                   ] else ...[
                     if (_mode == 'signup') ...[

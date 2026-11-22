@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>MizoLive — Luxury Live Streaming, Party Rooms & Short Videos</title>
+  <meta name="description" content="MizoLive is a luxury live-streaming, multi-seat party room, short video, PK battle, and gifting social platform.">
+  <meta property="og:title" content="MizoLive — Live · Connect · Enjoy">
+  <meta property="og:description" content="Watch live broadcasts, join 4 to 12 seat party rooms, battle in real-time PK stages, and explore short creator videos.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#06040B">
+
+  <!-- Google Sign-In Web Client ID -->
+  <meta name="google-signin-client_id" content="918229305609-b2o4v9hko5iiotveksqdilst5qqu20jq.apps.googleusercontent.com">
+
+  <!-- iOS Web App Meta -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MizoLive">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Agora Web SDK required by agora_rtc_engine on Flutter Web -->
+  <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.22.1.js" crossorigin="anonymous"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #06040B;
+      color: #FFFFFF;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #mizo-boot-loader {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at top, #2B124C 0%, #06040B 72%);
+      z-index: 9999;
+      transition: opacity 0.25s ease;
+    }
+    .mizo-emblem {
+      width: 78px;
+      height: 78px;
+      border-radius: 22px;
+      background: linear-gradient(135deg, #3B0E6E, #14072A, #06040B);
+      border: 2px solid #F5B700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 38px;
+      font-weight: 900;
+      color: #F5B700;
+      box-shadow: 0 0 28px rgba(157, 78, 221, 0.55);
+    }
+    .mizo-title {
+      margin-top: 14px;
+      font-weight: 900;
+      font-size: 22px;
+      letter-spacing: 1px;
+    }
+    .mizo-title span {
+      color: #F5B700;
+    }
+  </style>
+</head>
+<body>
+  <div id="mizo-boot-loader">
+    <div class="mizo-emblem">M</div>
+    <div class="mizo-title">MIZO <span>LIVE</span></div>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      const loader = document.getElementById('mizo-boot-loader');
+      if (loader) {
+        loader.style.opacity = '0';
+        setTimeout(() => loader.remove(), 300);
+      }
+    });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

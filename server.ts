@@ -176,6 +176,38 @@ function resolveUserId(req: Request): string {
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1);
+
+  const explicitOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  app.use((req, res, next) => {
+    const origin = req.header('Origin');
+    if (origin) {
+      const isAllowed =
+        explicitOrigins.includes(origin) ||
+        /^https:\/\/[a-z0-9-]+\.(web\.app|firebaseapp\.com|run\.app)$/i.test(origin) ||
+        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+
+      if (isAllowed) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          'Content-Type, Authorization, x-mizo-user-id, x-mizo-admin-email, x-mizo-email-verified'
+        );
+      }
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '1mb' }));
 
   // 0. Health & Service Status

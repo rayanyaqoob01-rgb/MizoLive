@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mizo_live/data/mizo_seed_data.dart';
-import 'package:mizo_live/models/mizo_models.dart';
-import 'package:mizo_live/state/mizo_app_state.dart';
-import 'package:mizo_live/theme/mizo_theme.dart';
-import 'package:mizo_live/widgets/mizo_widgets.dart';
+import 'package:mizolive/data/mizo_seed_data.dart';
+import 'package:mizolive/models/mizo_models.dart';
+import 'package:mizolive/state/mizo_app_state.dart';
+import 'package:mizolive/theme/mizo_theme.dart';
+import 'package:mizolive/widgets/mizo_widgets.dart';
 
 void main() {
   group('MizoLive Domain Models & State', () {
@@ -14,7 +14,10 @@ void main() {
       expect(LevelSystem.getTier(1).name, 'Beginner');
       expect(LevelSystem.getTier(99).name, 'Legendary Member');
       expect(LevelSystem.getXpRequired(1), greaterThan(0));
-      expect(LevelSystem.getXpRequired(99), greaterThan(LevelSystem.getXpRequired(1)));
+      expect(
+        LevelSystem.getXpRequired(99),
+        greaterThan(LevelSystem.getXpRequired(1)),
+      );
     });
 
     test('Store supports all 8 categories and seed items', () {
@@ -41,8 +44,9 @@ void main() {
     });
   });
 
-  group('MizoLive Core Widget Smoke Tests', () {
-    testWidgets('Bottom navigation renders all 7 required items', (tester) async {
+  group('MizoLive Multi-Platform Widget Smoke Tests', () {
+    testWidgets('Mobile bottom navigation renders all 7 required items',
+        (tester) async {
       MainTab selected = MainTab.home;
       bool createTapped = false;
 
@@ -60,7 +64,14 @@ void main() {
         ),
       );
 
-      for (final label in ['Home', 'Rooms', 'Store', 'Videos', 'Chat', 'Profile']) {
+      for (final label in [
+        'Home',
+        'Rooms',
+        'Store',
+        'Videos',
+        'Chat',
+        'Profile',
+      ]) {
         expect(find.text(label), findsOneWidget);
       }
 
@@ -71,6 +82,32 @@ void main() {
       await tester.tap(find.text('Store'));
       await tester.pump();
       expect(selected, MainTab.store);
+    });
+
+    testWidgets('Desktop NavigationRail switches tabs cleanly', (tester) async {
+      MainTab selected = MainTab.home;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MizoTheme.darkTheme(),
+          home: Scaffold(
+            body: Row(
+              children: [
+                MizoDesktopRail(
+                  activeTab: selected,
+                  unreadCount: 2,
+                  onSelectTab: (tab) => selected = tab,
+                  onOpenCreate: () {},
+                ),
+                const Expanded(child: SizedBox()),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Rooms'));
+      await tester.pump();
+      expect(selected, MainTab.rooms);
     });
   });
 }

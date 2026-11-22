@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:flutter/material.dart';
 import '../data/mizo_seed_data.dart';
 import '../models/mizo_models.dart';
@@ -370,7 +371,27 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.asset(widget.stream.thumbnail, fit: BoxFit.cover),
+            if (MizoAgoraService.instance.status == AgoraStatus.connected &&
+                MizoAgoraService.instance.engine != null &&
+                (widget.isHost || MizoAgoraService.instance.remoteUids.isNotEmpty))
+              AgoraVideoView(
+                controller: widget.isHost
+                    ? VideoViewController(
+                        rtcEngine: MizoAgoraService.instance.engine!,
+                        canvas: const VideoCanvas(uid: 0),
+                      )
+                    : VideoViewController.remote(
+                        rtcEngine: MizoAgoraService.instance.engine!,
+                        canvas: VideoCanvas(
+                          uid: MizoAgoraService.instance.remoteUids.first,
+                        ),
+                        connection: RtcConnection(
+                          channelId: 'live_${widget.stream.id}',
+                        ),
+                      ),
+              )
+            else
+              Image.asset(widget.stream.thumbnail, fit: BoxFit.cover),
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(

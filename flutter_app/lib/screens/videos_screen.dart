@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../data/mizo_seed_data.dart';
@@ -373,7 +372,7 @@ class _UploadVideoScreenState extends State<UploadVideoScreen> {
             label: Text(
               _pickedVideo != null
                   ? 'Selected: ${_pickedVideo!.name}'
-                  : 'Select Video from Android Gallery',
+                  : 'Select Video from Device',
             ),
           ),
           const SizedBox(height: 14),
@@ -420,7 +419,7 @@ class _UploadVideoScreenState extends State<UploadVideoScreen> {
                     String? remoteUrl;
                     if (_pickedVideo != null) {
                       remoteUrl = await MizoFirebaseService.instance
-                          .uploadFile('videos', File(_pickedVideo!.path));
+                          .uploadXFile('videos', _pickedVideo!);
                     }
                     final item = UserVideo(
                       id: 'vid-${DateTime.now().millisecondsSinceEpoch}',

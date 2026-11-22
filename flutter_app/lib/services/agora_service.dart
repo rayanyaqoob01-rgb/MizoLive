@@ -31,6 +31,8 @@ class MizoAgoraService extends ChangeNotifier {
   static final MizoAgoraService instance = MizoAgoraService._();
 
   RtcEngine? _engine;
+  RtcEngine? get engine => _engine;
+
   AgoraStatus status = AgoraStatus.idle;
   String? activeChannel;
   String? statusDetail;
@@ -41,6 +43,8 @@ class MizoAgoraService extends ChangeNotifier {
   final Set<int> remoteUids = {};
 
   Future<bool> _ensurePermissions({required bool withVideo}) async {
+    // On Flutter Web, AgoraRTC SDK / browser getUserMedia prompts for camera/mic natively.
+    if (kIsWeb) return true;
     final perms = <Permission>[Permission.microphone];
     if (withVideo) perms.add(Permission.camera);
     final statuses = await perms.request();
@@ -196,11 +200,14 @@ class MizoAgoraService extends ChangeNotifier {
 
   Future<void> switchCamera() async {
     usingFrontCamera = !usingFrontCamera;
-    await _engine?.switchCamera();
+    try {
+      await _engine?.switchCamera();
+    } catch (_) {}
     notifyListeners();
   }
 
   Future<void> toggleFlash() async {
+    if (kIsWeb) return;
     flashOn = !flashOn;
     try {
       await _engine?.setCameraTorchOn(flashOn);

@@ -324,6 +324,119 @@ class MizoBottomNavBar extends StatelessWidget {
   }
 }
 
+class MizoDesktopRail extends StatelessWidget {
+  final MainTab activeTab;
+  final int unreadCount;
+  final ValueChanged<MainTab> onSelectTab;
+  final VoidCallback onOpenCreate;
+
+  const MizoDesktopRail({
+    super.key,
+    required this.activeTab,
+    required this.unreadCount,
+    required this.onSelectTab,
+    required this.onOpenCreate,
+  });
+
+  static const _tabs = [
+    MainTab.home,
+    MainTab.rooms,
+    MainTab.store,
+    MainTab.videos,
+    MainTab.chat,
+    MainTab.profile,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final selectedIdx = _tabs.indexOf(activeTab).clamp(0, _tabs.length - 1);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0C0618) : Colors.white,
+        border: Border(
+          right: BorderSide(
+            color: MizoColors.neonPurple.withValues(alpha: 0.35),
+            width: 1,
+          ),
+        ),
+      ),
+      child: NavigationRail(
+        backgroundColor: Colors.transparent,
+        selectedIndex: selectedIdx,
+        onDestinationSelected: (idx) => onSelectTab(_tabs[idx]),
+        labelType: NavigationRailLabelType.all,
+        selectedIconTheme: const IconThemeData(color: MizoColors.gold),
+        selectedLabelTextStyle: const TextStyle(
+          color: MizoColors.gold,
+          fontWeight: FontWeight.w800,
+          fontSize: 11,
+        ),
+        unselectedIconTheme: IconThemeData(
+          color: isDark ? Colors.white70 : const Color(0xFF4C1D95),
+        ),
+        unselectedLabelTextStyle: TextStyle(
+          color: isDark ? Colors.white70 : const Color(0xFF4C1D95),
+          fontSize: 11,
+        ),
+        leading: Column(
+          children: [
+            const SizedBox(height: 12),
+            const MizoLogoMark(size: 42),
+            const SizedBox(height: 16),
+            FloatingActionButton(
+              mini: true,
+              elevation: 4,
+              backgroundColor: MizoColors.gold,
+              foregroundColor: const Color(0xFF1E0B3B),
+              onPressed: onOpenCreate,
+              child: const Icon(Icons.add_rounded),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+        destinations: [
+          const NavigationRailDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: Text('Home'),
+          ),
+          const NavigationRailDestination(
+            icon: Icon(Icons.meeting_room_outlined),
+            selectedIcon: Icon(Icons.meeting_room_rounded),
+            label: Text('Rooms'),
+          ),
+          const NavigationRailDestination(
+            icon: Icon(Icons.shopping_bag_outlined),
+            selectedIcon: Icon(Icons.shopping_bag_rounded),
+            label: Text('Store'),
+          ),
+          const NavigationRailDestination(
+            icon: Icon(Icons.play_circle_outline),
+            selectedIcon: Icon(Icons.play_circle_fill_rounded),
+            label: Text('Videos'),
+          ),
+          NavigationRailDestination(
+            icon: Badge(
+              isLabelVisible: unreadCount > 0,
+              label: Text(unreadCount > 9 ? '9+' : '$unreadCount'),
+              child: const Icon(Icons.chat_bubble_outline),
+            ),
+            selectedIcon: const Icon(Icons.chat_bubble_rounded),
+            label: const Text('Chat'),
+          ),
+          const NavigationRailDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person_rounded),
+            label: Text('Profile'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Future<bool> ensureAuthenticatedOrPrompt(
   BuildContext context,
   MizoAppState state,

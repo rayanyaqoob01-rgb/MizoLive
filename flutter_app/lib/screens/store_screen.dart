@@ -98,82 +98,91 @@ class _StoreScreenState extends State<StoreScreen> {
             ),
           ),
           Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.all(14),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.78,
-              ),
-              itemCount: items.length,
-              itemBuilder: (_, idx) {
-                final item = items[idx];
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        ProfileFrameAvatar(
-                          imageAsset: s.profile.avatar,
-                          size: 56,
-                          frameId: item.id,
-                        ),
-                        Column(
+            child: LayoutBuilder(
+              builder: (_, constraints) {
+                final cols = constraints.maxWidth >= 960
+                    ? 4
+                    : (constraints.maxWidth >= 620 ? 3 : 2);
+                return GridView.builder(
+                  padding: const EdgeInsets.all(14),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: 0.78,
+                  ),
+                  itemCount: items.length,
+                  itemBuilder: (_, idx) {
+                    final item = items[idx];
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(item.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w800, fontSize: 13)),
-                            const SizedBox(height: 2),
-                            Text(item.subtitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 10, color: Colors.white60)),
+                            ProfileFrameAvatar(
+                              imageAsset: s.profile.avatar,
+                              size: 56,
+                              frameId: item.id,
+                            ),
+                            Column(
+                              children: [
+                                Text(item.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 13)),
+                                const SizedBox(height: 2),
+                                Text(item.subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontSize: 10, color: Colors.white60)),
+                              ],
+                            ),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: item.equipped
+                                      ? MizoColors.emerald
+                                      : item.owned
+                                          ? MizoColors.royalPurple
+                                          : MizoColors.gold,
+                                  foregroundColor: item.owned
+                                      ? Colors.white
+                                      : const Color(0xFF1E0B3B),
+                                ),
+                                onPressed: () async {
+                                  if (!item.owned) {
+                                    final ok = await ensureAuthenticatedOrPrompt(
+                                        context, s, 'purchase ${item.name}');
+                                    if (!ok) return;
+                                  }
+                                  final status =
+                                      await s.purchaseOrEquipStoreItem(item);
+                                  if (status == 'insufficient' && mounted) {
+                                    widget.onOpenWallet();
+                                  }
+                                },
+                                child: Text(
+                                  item.equipped
+                                      ? 'Equipped'
+                                      : item.owned
+                                          ? 'Equip'
+                                          : '${item.price} Coins',
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: item.equipped
-                                  ? MizoColors.emerald
-                                  : item.owned
-                                      ? MizoColors.royalPurple
-                                      : MizoColors.gold,
-                              foregroundColor: item.owned
-                                  ? Colors.white
-                                  : const Color(0xFF1E0B3B),
-                            ),
-                            onPressed: () async {
-                              if (!item.owned) {
-                                final ok = await ensureAuthenticatedOrPrompt(
-                                    context, s, 'purchase ${item.name}');
-                                if (!ok) return;
-                              }
-                              final status =
-                                  await s.purchaseOrEquipStoreItem(item);
-                              if (status == 'insufficient' && mounted) {
-                                widget.onOpenWallet();
-                              }
-                            },
-                            child: Text(
-                              item.equipped
-                                  ? 'Equipped'
-                                  : item.owned
-                                      ? 'Equip'
-                                      : '${item.price} Coins',
-                              style: const TextStyle(
-                                  fontSize: 11, fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 );
               },
             ),
